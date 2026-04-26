@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Slime Lime — Late nights deserve better fuel.</title>
+<link rel="stylesheet" href="colors_and_type.css"/>
+<link rel="stylesheet" href="site.css"/>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="assets/Bottle.jsx"></script>
+<script type="text/babel" src="shell.jsx"></script>
+<script type="text/babel" src="home.jsx"></script>
+<script type="text/babel" src="flagship.jsx"></script>
+<script type="text/babel" src="subscribe.jsx"></script>
+<script type="text/babel" src="story-faq.jsx"></script>
+
+<script type="text/babel">
+const { useState: useStateApp, useEffect: useEffectApp } = React;
+
+function App() {
+  const route = window.useRoute();
+  const cart = window.useCart();
+  const [flavor, setFlavor] = useStateApp(window.FLAVORS[0]);
+  window.useFlavorTheme(flavor);
+
+  let page;
+  if (route.startsWith('/flagship')) page = <window.FlagshipPage flavor={flavor} onAdd={cart.add}/>;
+  else if (route.startsWith('/subscribe')) page = <window.SubscribePage onAdd={cart.add}/>;
+  else if (route.startsWith('/story')) page = <window.StoryPage/>;
+  else if (route.startsWith('/faq')) page = <window.FAQPage/>;
+  else page = <window.HomePage flavor={flavor} onPickFlavor={setFlavor} onAdd={cart.add}/>;
+
+  return (
+    <div>
+      <window.Nav cartCount={cart.count} onCart={() => cart.setCartOpen(true)} route={route}/>
+      {page}
+      <window.Footer/>
+      <window.CartDrawer
+        open={cart.cartOpen}
+        items={cart.cart}
+        onClose={() => cart.setCartOpen(false)}
+        onInc={cart.inc}
+        onDec={cart.dec}
+        total={cart.total}
+      />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

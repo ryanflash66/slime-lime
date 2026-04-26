@@ -1,0 +1,346 @@
+/* =========================================================
+   Slime Lime — Colors & Type Foundations
+   Single source of truth. Import this everywhere.
+   ========================================================= */
+
+/* ---------- Fonts (Google Fonts substitutions — see README) ---------- */
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+:root {
+  /* =========================================================
+     COLOR SYSTEM
+     ========================================================= */
+
+  /* --- Brand greens (the hero) --- 
+     Sampled from official brand reference (Colors.png + logos):
+     #8BBE1C olive-lime, #CAE00F bright zest, #E5F086 cream-zest */
+  --lime-50:  #F6FBDA;
+  --lime-100: #ECF7B0;
+  --lime-200: #E5F086;   /* cream-zest — soft pill bgs, accent washes */
+  --lime-300: #D4EA3D;
+  --lime-400: #CAE00F;   /* bright zest — secondary accent */
+  --lime-500: #A6C00C;
+  --lime-600: #8BBE1C;   /* olive-lime — primary brand green */
+  --lime-700: #6E961A;
+  --lime-800: #4D6A14;
+  --lime-900: #2A3B0B;
+
+  /* --- Citrus yellow-green (kept as alias for back-compat) --- */
+  --zest-100: var(--lime-100);
+  --zest-200: var(--lime-200);
+  --zest-300: var(--lime-300);
+  --zest-400: var(--lime-400);
+  --zest-500: var(--lime-500);
+
+  /* --- Deep forest (rich base — pulled from leaf-bg imagery) --- */
+  --forest-300: #2D6E3A;
+  --forest-500: #173E1F;
+  --forest-700: #0C2913;
+  --forest-900: #04130A;
+
+  /* --- Inks (near-black backgrounds, our canvas) --- */
+  --ink-50:  #F7F8F4;   /* paper — light-mode bg, label paper */
+  --ink-100: #ECEEE5;
+  --ink-200: #D6D9CC;
+  --ink-300: #A8AC9C;
+  --ink-400: #6F7368;
+  --ink-500: #3F4239;
+  --ink-600: #25271F;
+  --ink-700: #0E1A0F;   /* card on canvas — leaf-shadow tint */
+  --ink-800: #060D08;   /* canvas — near-black with green cast (matches bg-leaves) */
+  --ink-900: #020604;   /* deepest — overlays, wells */
+  --ink-950: #000000;
+
+  /* --- Flavor accents (controlled per the brief: flagship lime + variants) --- */
+  --flavor-lemon-lime:    var(--lime-400);   /* flagship */
+  --flavor-cherry-cool:   #FF3D5C;           /* tart cherry */
+  --flavor-blue-raspberry:#3D8BFF;           /* blue rasp */
+  --flavor-mango-rush:    #FF9A1F;           /* mango */
+  --flavor-grape-glitch:  #B96BFF;           /* grape */
+  --flavor-watermelon:    #FF6B8A;           /* watermelon */
+
+  /* --- Semantic --- */
+  --success: var(--lime-400);
+  --warning: #FFC83D;
+  --danger:  #FF3D5C;
+  --info:    #3D8BFF;
+
+  /* --- Surfaces (dark-first; light-mode tokens below in [data-theme="light"]) --- */
+  --bg-canvas:   var(--ink-800);
+  --bg-elevated: var(--ink-700);
+  --bg-sunken:   var(--ink-900);
+  --bg-overlay:  rgba(6, 7, 4, 0.72);
+
+  --surface-card:        #0E1A0F;
+  --surface-card-hover:  #142117;
+  --surface-pill:        rgba(202, 224, 15, 0.12);
+  --surface-pill-hover:  rgba(202, 224, 15, 0.20);
+
+  /* --- Text --- */
+  --fg-1: #FAFCEF;                 /* primary — high contrast white-green */
+  --fg-2: rgba(250, 252, 239, 0.72);
+  --fg-3: rgba(250, 252, 239, 0.50);
+  --fg-4: rgba(250, 252, 239, 0.32);
+  --fg-on-lime: var(--ink-900);    /* black text sits on neon lime */
+  --fg-link: var(--lime-300);
+
+  /* --- Borders & dividers --- */
+  --border-1: rgba(250, 252, 239, 0.08);
+  --border-2: rgba(250, 252, 239, 0.14);
+  --border-strong: rgba(250, 252, 239, 0.28);
+  --border-lime: rgba(202, 224, 15, 0.45);
+
+  /* --- Glow / lighting (the slime gloss + neon halo) --- */
+  --glow-lime-sm: 0 0 0 1px rgba(202, 224, 15, 0.35), 0 0 12px rgba(202, 224, 15, 0.45);
+  --glow-lime-md: 0 0 0 1px rgba(202, 224, 15, 0.45), 0 0 28px rgba(202, 224, 15, 0.55);
+  --glow-lime-lg: 0 0 0 1px rgba(202, 224, 15, 0.55), 0 0 56px rgba(202, 224, 15, 0.65);
+  --glow-zest:    0 0 24px rgba(229, 240, 134, 0.45);
+
+  /* --- Shadows (premium, restrained) --- */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-md: 0 6px 16px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.35);
+  --shadow-lg: 0 18px 48px rgba(0,0,0,0.55), 0 6px 12px rgba(0,0,0,0.45);
+  --shadow-xl: 0 36px 96px rgba(0,0,0,0.65);
+
+  /* Slime-gloss inner highlights — used on cans, capsules, big buttons */
+  --gloss-top:     inset 0 1px 0 rgba(255,255,255,0.18);
+  --gloss-edge:    inset 0 0 0 1px rgba(255,255,255,0.06);
+  --gloss-pill:    inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -1px 0 rgba(0,0,0,0.20);
+
+  /* =========================================================
+     SPACING & RHYTHM (4px base)
+     ========================================================= */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+  --space-32: 128px;
+
+  /* Radii — a little more relaxed than typical "tech" (slime softness) */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;   /* default for cards, fields */
+  --radius-lg: 18px;   /* hero cards */
+  --radius-xl: 28px;   /* big surfaces */
+  --radius-pill: 999px;
+  --radius-can:  44% 44% 6% 6% / 8% 8% 4% 4%;  /* can-top curvature */
+
+  /* =========================================================
+     TYPE SYSTEM
+     =========================================================
+     Display: Bricolage Grotesque (variable optical-sizing) — wordmark + huge headlines
+     UI / Body display: Space Grotesk — H1-H4, buttons, eyebrows
+     Body: Inter — running text, UI, forms
+     Mono: JetBrains Mono — nutrition stats, code, tickers
+  */
+  --font-display: "Bricolage Grotesque", "Space Grotesk", system-ui, sans-serif;
+  --font-ui:      "Space Grotesk", "Inter", system-ui, sans-serif;
+  --font-body:    "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Sizes — a major-second-ish scale w/ display jumps */
+  --fs-xs:   12px;
+  --fs-sm:   14px;
+  --fs-base: 16px;
+  --fs-md:   18px;
+  --fs-lg:   20px;
+  --fs-xl:   24px;
+  --fs-2xl:  32px;
+  --fs-3xl:  44px;
+  --fs-4xl:  64px;
+  --fs-5xl:  96px;
+  --fs-6xl:  144px;
+
+  /* Line heights */
+  --lh-tight:   1.04;
+  --lh-snug:    1.18;
+  --lh-normal:  1.40;
+  --lh-relaxed: 1.60;
+
+  /* Letter spacing — tightly negative on big display, positive on small caps */
+  --tr-display: -0.035em;
+  --tr-tight:   -0.015em;
+  --tr-normal:  0;
+  --tr-eyebrow: 0.14em;
+  --tr-mono:    0.02em;
+
+  /* Weights */
+  --fw-regular:  400;
+  --fw-medium:   500;
+  --fw-semibold: 600;
+  --fw-bold:     700;
+  --fw-black:    800;
+
+  /* =========================================================
+     MOTION
+     ========================================================= */
+  --ease-slime: cubic-bezier(0.22, 1.2, 0.36, 1);   /* overshoot, slime-y */
+  --ease-out:   cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in:    cubic-bezier(0.6, 0.04, 0.98, 0.34);
+  --dur-1: 120ms;
+  --dur-2: 220ms;
+  --dur-3: 360ms;
+  --dur-4: 600ms;
+}
+
+/* =========================================================
+   LIGHT MODE (used sparingly — packaging mockups, label artwork)
+   ========================================================= */
+[data-theme="light"] {
+  --bg-canvas:   var(--ink-50);
+  --bg-elevated: #FFFFFF;
+  --bg-sunken:   var(--ink-100);
+  --surface-card: #FFFFFF;
+  --surface-card-hover: var(--ink-50);
+  --fg-1: var(--ink-900);
+  --fg-2: rgba(6, 7, 4, 0.70);
+  --fg-3: rgba(6, 7, 4, 0.50);
+  --fg-4: rgba(6, 7, 4, 0.32);
+  --border-1: rgba(6, 7, 4, 0.08);
+  --border-2: rgba(6, 7, 4, 0.14);
+}
+
+/* =========================================================
+   SEMANTIC TYPE STYLES (apply these to elements directly)
+   ========================================================= */
+.t-wordmark {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(40px, 6vw, 96px);
+  letter-spacing: -0.04em;
+  line-height: 0.92;
+  font-optical-sizing: auto;
+}
+
+.t-display-xl {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: var(--fs-6xl);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--tr-display);
+}
+
+.t-display-lg {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: var(--fs-5xl);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--tr-display);
+}
+
+.t-h1 {
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: var(--fs-4xl);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--tr-tight);
+}
+
+.t-h2 {
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: var(--fs-3xl);
+  line-height: var(--lh-snug);
+  letter-spacing: var(--tr-tight);
+}
+
+.t-h3 {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-2xl);
+  line-height: var(--lh-snug);
+  letter-spacing: var(--tr-tight);
+}
+
+.t-h4 {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-xl);
+  line-height: var(--lh-snug);
+}
+
+.t-body {
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: var(--fs-base);
+  line-height: var(--lh-relaxed);
+}
+
+.t-body-md {
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: var(--fs-md);
+  line-height: var(--lh-relaxed);
+}
+
+.t-body-sm {
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+}
+
+.t-eyebrow {
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tr-eyebrow);
+  color: var(--lime-400);
+}
+
+.t-button {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: var(--fs-base);
+  letter-spacing: 0.01em;
+}
+
+.t-mono {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: var(--fs-sm);
+  letter-spacing: var(--tr-mono);
+}
+
+.t-stat {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: var(--fs-3xl);
+  letter-spacing: var(--tr-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* =========================================================
+   BASE ELEMENT STYLES (opt-in via .ds-prose or page-level)
+   ========================================================= */
+html, body {
+  background: var(--bg-canvas);
+  color: var(--fg-1);
+  font-family: var(--font-body);
+  font-size: var(--fs-base);
+  line-height: var(--lh-relaxed);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1 { font: 700 var(--fs-4xl)/var(--lh-tight) var(--font-ui); letter-spacing: var(--tr-tight); margin: 0; }
+h2 { font: 700 var(--fs-3xl)/var(--lh-snug)  var(--font-ui); letter-spacing: var(--tr-tight); margin: 0; }
+h3 { font: 600 var(--fs-2xl)/var(--lh-snug)  var(--font-ui); letter-spacing: var(--tr-tight); margin: 0; }
+h4 { font: 600 var(--fs-xl)/var(--lh-snug)   var(--font-ui); margin: 0; }
+p  { margin: 0 0 1em; color: var(--fg-2); }
+code, kbd, samp { font-family: var(--font-mono); font-size: 0.92em; }
+a  { color: var(--fg-link); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+hr { border: 0; border-top: 1px solid var(--border-1); margin: var(--space-8) 0; }
+
+::selection { background: var(--lime-400); color: var(--ink-900); }
