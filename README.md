@@ -2,7 +2,9 @@
 
 > Late nights deserve better fuel.
 
-Marketing site for **Slime Lime** — a clean-formula soda built for the long session. 75mg of clean caffeine, 100mg L-theanine, real fruit, six electrolytes. Built for gamers, streamers, and anyone allergic to a 4pm crash.
+Personal project. **Slime Lime** is a conceptual brand I built end-to-end — naming, positioning, visual identity, packaging language, and this site. The "company" doesn't exist; the goal was to take a fictional product (a clean-formula gaming soda) and design every surface as if it shipped tomorrow.
+
+This repo is the marketing site half of that exercise.
 
 **Live site:** https://slime-lime-eta.vercel.app
 
@@ -73,7 +75,3 @@ For manual deploys: `vercel --prod` from the project root.
 - Babel-standalone for in-browser JSX
 - Vanilla CSS with custom properties (no framework)
 - Static hosting on Vercel
-
-## Credits
-
-Designed with [Claude Design](https://claude.ai/design). Implemented from the design handoff bundle.
