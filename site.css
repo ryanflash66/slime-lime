@@ -93,11 +93,19 @@ a { color: inherit; }
 /* Press feedback for every button, inline-styled ones included.
    The base transition is wrapped in :where() (zero specificity) so any class
    or inline `transition` overrides it; those should list `transform` to keep
-   the press smooth. `.btn-primary` presses the same as every other button. */
+   the press smooth. `.btn-primary` presses the same as every other button.
+   Exempt: full-width disclosure rows (plain buttons with aria-controls, e.g.
+   FAQ rows) and tabs — list rows get a background highlight instead of a
+   scale, and tabs are pressed too often to scale. */
 :where(button) { transition: transform 140ms var(--ease-out); }
-button:not(:disabled):active,
-.btn:not(:disabled):active,
-.iconbtn:not(:disabled):active { transform: scale(0.97); }
+button:not(:disabled):not([role="tab"]):not([aria-controls]:not(.btn):not(.iconbtn)):active,
+.btn:not(:disabled):not([role="tab"]):active,
+.iconbtn:not(:disabled):not([role="tab"]):active { transform: scale(0.97); }
+/* !important beats the rows' inline `background: transparent`. Not applied
+   to tabs: the selected tab carries its own inline background. */
+button[aria-controls]:not(.btn):not(.iconbtn):not([role="tab"]):not(:disabled):active {
+  background-color: rgba(250, 252, 239, 0.04) !important;
+}
 
 /* Disabled: dimmed, inert to hover/press (hover/active rules exclude :disabled). */
 .btn:disabled,
@@ -409,7 +417,8 @@ html { scroll-behavior: smooth; }
     transition-duration: 120ms !important;
     transition-delay: 0s !important;
   }
-  button:not(:disabled):active,
-  .btn:not(:disabled):active,
-  .iconbtn:not(:disabled):active { transform: none; }
+  /* Same selectors as the press rule (same specificity, later in source). */
+  button:not(:disabled):not([role="tab"]):not([aria-controls]:not(.btn):not(.iconbtn)):active,
+  .btn:not(:disabled):not([role="tab"]):active,
+  .iconbtn:not(:disabled):not([role="tab"]):active { transform: none; }
 }
