@@ -5,158 +5,317 @@ const { useState: useStateH, useEffect: useEffectH, useRef: useRefH, useMemo: us
 // ─────────────────────────────────────────────────────────────
 // HERO — Reactive: cursor controls slime morph + can rotation, click to drip
 // ─────────────────────────────────────────────────────────────
-function Hero({ flavor, onShop, onWatch }) {
-  const ref = useRefH(null);
-  const [cursor, setCursor] = useStateH({ x: 0.5, y: 0.5, active: false });
-  const [drips, setDrips] = useStateH([]);
-  const [tickValue, setTickValue] = useStateH(75);
+const heroEase = 'cubic-bezier(0.23, 1, 0.32, 1)';
+const heroInteractive = 'a,button,input,select,textarea,label,[role="button"]';
 
+// Local media-query hook (hero only).
+function heroUseMedia(query) {
+  const [matches, setMatches] = useStateH(() => !!(window.matchMedia && window.matchMedia(query).matches));
+  useEffectH(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia(query);
+    const onChange = () => setMatches(mql.matches);
+    onChange();
+    if (mql.addEventListener) mql.addEventListener('change', onChange); else mql.addListener(onChange);
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener('change', onChange); else mql.removeListener(onChange);
+    };
+  }, [query]);
+  return matches;
+}
+
+// Right-hand callouts are clamped so they never run past the container edge.
+const heroPinRight = pct => `min(${pct}, calc(100% - 132px + max(0px, (100vw - 1280px) / 2)))`;
+const heroPins = [
+  { x: '-8%', y: '22%', label: 'CAFFEINE', value: '75mg', sub: 'clean · slow-release' },
+  { x: heroPinRight('86%'), y: '34%', label: 'SUGAR', value: '5g', sub: 'real fruit · low gi' },
+  { x: '-12%', y: '68%', label: 'CRASH', value: '0', sub: 'all session' },
+  { x: heroPinRight('84%'), y: '78%', label: 'VOL', value: '12oz', sub: 'slim can' },
+];
+
+// Hydration readout ticks in its own component so the hero (and its bottle SVG) doesn't re-render.
+function HeroHydration({ paused }) {
+  const [value, setValue] = useStateH(75);
+  useEffectH(() => {
+    if (paused) return;
+    const tick = () => setValue(70 + Math.round(Math.sin(Date.now() / 800) * 5 + 5));
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [paused]);
+  return <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{value}%</span>;
+}
+
+// Click splash: expands and fades out (transform/opacity); keeps the slime morph for character.
+function HeroDrip({ x, y, color, reduced }) {
+  const ref = useRefH(null);
   useEffectH(() => {
     const el = ref.current;
-    if (!el) return;
+    if (!el || typeof el.animate !== 'function') return;
+    el.animate(
+      reduced
+        ? [{ opacity: 1 }, { opacity: 0 }]
+        : [{ opacity: 1, transform: 'scale(0.6)' }, { opacity: 0, transform: 'scale(1.15)' }],
+      { duration: reduced ? 400 : 1200, easing: heroEase, fill: 'forwards' }
+    );
+  }, []);
+  return (
+    <div ref={ref} data-hero-drip="" aria-hidden="true" style={{
+      position: 'absolute',
+      left: x - 60, top: y - 60,
+      width: 120, height: 120,
+      borderRadius: '50%',
+      background: `radial-gradient(circle, ${color}88, transparent 60%)`,
+      animation: reduced ? 'none' : 'slime-morph 1.4s ease-out forwards',
+      pointerEvents: 'none',
+      zIndex: 2,
+    }}/>
+  );
+}
+
+function Hero({ flavor, onShop, onWatch }) {
+  const ref = useRefH(null);
+  const gridRef = useRefH(null);
+  const eyebrowRef = useRefH(null);
+  const h1Ref = useRefH(null);
+  const bodyRef = useRefH(null);
+  const ctaRef = useRefH(null);
+  const metricsRef = useRefH(null);
+  const bottleRef = useRefH(null);
+  const underlineRef = useRefH(null);
+  const readXRef = useRefH(null);
+  const readYRef = useRefH(null);
+  const dripSeq = useRefH(0);
+  const dripTimers = useRefH(new Set());
+
+  const finePointer = heroUseMedia('(hover: hover) and (pointer: fine)');
+  const reduced = heroUseMedia('(prefers-reduced-motion: reduce)');
+  const narrow = heroUseMedia('(max-width: 899px)');
+  const small = heroUseMedia('(max-width: 600px)');
+
+  const [active, setActive] = useStateH(false); // pointer over the hero, not over a control
+  const [drips, setDrips] = useStateH([]);
+  const [offscreen, setOffscreen] = useStateH(false);
+
+  // Cursor tracking: write --mx/--my (0–1) on the section once per frame; no React state per move.
+  useEffectH(() => {
+    const el = ref.current;
+    if (!el || !finePointer) return;
+    let raf = 0, px = 0.5, py = 0.5, shown = false;
+    const pad = n => String(n).padStart(4, '0');
+    const flush = () => {
+      raf = 0;
+      el.style.setProperty('--mx', px.toFixed(4));
+      el.style.setProperty('--my', py.toFixed(4));
+      if (readXRef.current) readXRef.current.textContent = 'X:' + pad(Math.round(px * 1920));
+      if (readYRef.current) readYRef.current.textContent = 'Y:' + pad(Math.round(py * 1080));
+    };
     const onMove = e => {
       const rect = el.getBoundingClientRect();
-      setCursor({
-        x: (e.clientX - rect.left) / rect.width,
-        y: (e.clientY - rect.top) / rect.height,
-        active: true
-      });
+      px = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+      py = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+      const show = !(e.target instanceof Element && e.target.closest(heroInteractive));
+      if (show !== shown) {
+        if (show) flush(); // place the reticle before it fades in
+        shown = show;
+        setActive(show);
+      }
+      if (!raf) raf = requestAnimationFrame(flush);
     };
-    const onLeave = () => setCursor(c => ({ ...c, active: false }));
-    el.addEventListener('mousemove', onMove);
+    const onLeave = () => { shown = false; setActive(false); };
+    el.addEventListener('mousemove', onMove, { passive: true });
     el.addEventListener('mouseleave', onLeave);
     return () => {
+      cancelAnimationFrame(raf);
       el.removeEventListener('mousemove', onMove);
       el.removeEventListener('mouseleave', onLeave);
     };
+  }, [finePointer]);
+
+  // Pause ambient loops while the hero is offscreen.
+  useEffectH(() => {
+    const el = ref.current;
+    if (!el || !('IntersectionObserver' in window)) return;
+    const io = new IntersectionObserver(([entry]) => setOffscreen(!entry.isIntersecting));
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  useEffectH(() => {
+    const svg = underlineRef.current;
+    if (!svg || typeof svg.pauseAnimations !== 'function') return;
+    if (offscreen) svg.pauseAnimations(); else svg.unpauseAnimations();
+  }, [offscreen, reduced]);
+
+  // First-load entrance, once per session. Fill 'backwards' only, so nothing lingers or blocks clicks.
+  React.useLayoutEffect(() => {
+    let seen = false;
+    try {
+      seen = sessionStorage.getItem('sl-hero-seen') === '1';
+      sessionStorage.setItem('sl-hero-seen', '1');
+    } catch (err) { /* storage unavailable: just play it */ }
+    if (seen) return;
+    const run = (el, keyframes, opts) => {
+      if (el && typeof el.animate === 'function') el.animate(keyframes, { fill: 'backwards', ...opts });
+    };
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      run(gridRef.current, [{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'linear' });
+      return;
+    }
+    [eyebrowRef, h1Ref, bodyRef, ctaRef, metricsRef].forEach((r, i) => run(r.current,
+      [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'translateY(0)' }],
+      { duration: 500, delay: i * 60, easing: heroEase }));
+    run(bottleRef.current,
+      [{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'scale(1)' }],
+      { duration: 600, delay: 120, easing: heroEase });
   }, []);
 
   useEffectH(() => {
-    const t = setInterval(() => {
-      setTickValue(v => 70 + Math.round(Math.sin(Date.now() / 800) * 5 + 5));
-    }, 100);
-    return () => clearInterval(t);
+    const timers = dripTimers.current;
+    return () => timers.forEach(clearTimeout);
   }, []);
 
   const handleClick = e => {
+    if (e.target instanceof Element && e.target.closest(heroInteractive)) return;
     const rect = ref.current.getBoundingClientRect();
-    const id = Date.now();
+    const id = ++dripSeq.current;
     setDrips(d => [...d, { id, x: e.clientX - rect.left, y: e.clientY - rect.top }]);
-    setTimeout(() => setDrips(d => d.filter(x => x.id !== id)), 1800);
+    const t = setTimeout(() => {
+      dripTimers.current.delete(t);
+      setDrips(d => d.filter(x => x.id !== id));
+    }, reduced ? 450 : 1300);
+    dripTimers.current.add(t);
   };
 
-  const tilt = (cursor.x - 0.5) * 8;
-  const liftY = (cursor.y - 0.5) * -10;
+  const play = offscreen ? 'paused' : 'running';
+  const showReticle = finePointer && active;
+  const follow = finePointer && !reduced; // blob + bottle respond to the cursor
+  const bottleH = small ? 400 : narrow ? 480 : 580;
+  const stageH = narrow ? bottleH + 40 : 600;
+  const ringSize = Math.round(bottleH * 0.93);
+  const puddleSize = Math.round(bottleH * 0.8);
+  const padX = small ? 20 : 32;
+  const pillStyle = small ? { fontSize: 9, padding: '5px 8px', whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' };
+  // Memoized so hover/drip re-renders don't rebuild the bottle SVG.
+  const canEl = useMemoH(() => <Can flavor={flavor} height={bottleH}/>, [flavor, bottleH]);
+  const followTransform = 'translate3d(calc((var(--mx, 0.5) - 0.5) * 100%), calc((var(--my, 0.5) - 0.5) * 100%), 0)';
 
   return (
-    <section ref={ref} onClick={handleClick} style={{
+    <section ref={ref} onClick={handleClick} data-offscreen={offscreen ? 'true' : 'false'} style={{
       position: 'relative',
       minHeight: '100vh',
       overflow: 'hidden',
       paddingTop: 60,
-      cursor: 'none',
+      cursor: showReticle ? 'none' : undefined,
     }} data-screen-label="01 Home Hero">
       {/* layered background */}
       <div className="hero-bg"/>
 
-      {/* Video-game targeting reticle following cursor */}
-      {cursor.active && (
-        <div style={{
-          position: 'absolute',
-          left: `${cursor.x * 100}%`,
-          top: `${cursor.y * 100}%`,
-          transform: 'translate(-50%, -50%)',
-          width: 64, height: 64,
+      {/* Video-game targeting reticle following cursor (fine pointers only) */}
+      {finePointer && (
+        <div data-hero-reticle="" aria-hidden="true" style={{
+          position: 'absolute', inset: 0,
           pointerEvents: 'none',
           zIndex: 20,
           mixBlendMode: 'screen',
+          transform: followTransform,
+          opacity: showReticle ? 1 : 0,
+          transition: `opacity 150ms ${heroEase}`,
         }}>
-          <svg viewBox="0 0 64 64" width="64" height="64" style={{ filter: `drop-shadow(0 0 6px ${flavor.color})` }}>
-            {/* Outer rotating ring */}
-            <g style={{ transformOrigin: '32px 32px', animation: 'slime-rotate 6s linear infinite' }}>
-              <circle cx="32" cy="32" r="26" fill="none" stroke={flavor.color} strokeWidth="1" strokeDasharray="3 3" opacity="0.6"/>
-            </g>
-            {/* Inner ring */}
-            <circle cx="32" cy="32" r="18" fill="none" stroke={flavor.color} strokeWidth="1.5"/>
-            {/* Corner brackets */}
-            <path d="M 8 14 L 8 8 L 14 8" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
-            <path d="M 50 8 L 56 8 L 56 14" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
-            <path d="M 56 50 L 56 56 L 50 56" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
-            <path d="M 14 56 L 8 56 L 8 50" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
-            {/* Crosshair lines (with gap in center) */}
-            <line x1="32" y1="0" x2="32" y2="22" stroke={flavor.color} strokeWidth="1.5"/>
-            <line x1="32" y1="42" x2="32" y2="64" stroke={flavor.color} strokeWidth="1.5"/>
-            <line x1="0" y1="32" x2="22" y2="32" stroke={flavor.color} strokeWidth="1.5"/>
-            <line x1="42" y1="32" x2="64" y2="32" stroke={flavor.color} strokeWidth="1.5"/>
-            {/* Center dot */}
-            <circle cx="32" cy="32" r="2" fill={flavor.color}/>
-            {/* Pulse ring */}
-            <circle cx="32" cy="32" r="14" fill="none" stroke={flavor.color} strokeWidth="1" opacity="0.5">
-              <animate attributeName="r" values="14;28;14" dur="1.6s" repeatCount="indefinite"/>
-              <animate attributeName="opacity" values="0.6;0;0.6" dur="1.6s" repeatCount="indefinite"/>
-            </circle>
-          </svg>
-          {/* HUD readout next to reticle */}
-          <div style={{
-            position: 'absolute',
-            top: 36, left: 40,
-            font: '600 9px JetBrains Mono, monospace',
-            color: flavor.color,
-            letterSpacing: '0.1em',
-            textShadow: `0 0 6px ${flavor.color}`,
-            whiteSpace: 'nowrap',
-          }}>
-            <div>X:{Math.round(cursor.x * 1920).toString().padStart(4, '0')}</div>
-            <div>Y:{Math.round(cursor.y * 1080).toString().padStart(4, '0')}</div>
-            <div style={{ marginTop: 2 }}>● LOCK</div>
+          <div style={{ position: 'absolute', left: '50%', top: '50%', width: 64, height: 64, marginLeft: -32, marginTop: -32 }}>
+            <svg viewBox="0 0 64 64" width="64" height="64" style={{ filter: `drop-shadow(0 0 6px ${flavor.color})` }}>
+              {/* Outer rotating ring */}
+              <g style={{
+                transformOrigin: '32px 32px',
+                animation: reduced ? 'none' : `slime-rotate 6s linear infinite ${showReticle ? 'running' : 'paused'}`,
+              }}>
+                <circle cx="32" cy="32" r="26" fill="none" stroke={flavor.color} strokeWidth="1" strokeDasharray="3 3" opacity="0.6"/>
+              </g>
+              {/* Inner ring */}
+              <circle cx="32" cy="32" r="18" fill="none" stroke={flavor.color} strokeWidth="1.5"/>
+              {/* Corner brackets */}
+              <path d="M 8 14 L 8 8 L 14 8" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
+              <path d="M 50 8 L 56 8 L 56 14" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
+              <path d="M 56 50 L 56 56 L 50 56" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
+              <path d="M 14 56 L 8 56 L 8 50" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
+              {/* Crosshair lines (with gap in center) */}
+              <line x1="32" y1="0" x2="32" y2="22" stroke={flavor.color} strokeWidth="1.5"/>
+              <line x1="32" y1="42" x2="32" y2="64" stroke={flavor.color} strokeWidth="1.5"/>
+              <line x1="0" y1="32" x2="22" y2="32" stroke={flavor.color} strokeWidth="1.5"/>
+              <line x1="42" y1="32" x2="64" y2="32" stroke={flavor.color} strokeWidth="1.5"/>
+              {/* Center dot */}
+              <circle cx="32" cy="32" r="2" fill={flavor.color}/>
+              {/* Pulse ring */}
+              <circle cx="32" cy="32" r="14" fill="none" stroke={flavor.color} strokeWidth="1" opacity="0.5">
+                {showReticle && !reduced && <animate attributeName="r" values="14;28;14" dur="1.6s" repeatCount="indefinite"/>}
+                {showReticle && !reduced && <animate attributeName="opacity" values="0.6;0;0.6" dur="1.6s" repeatCount="indefinite"/>}
+              </circle>
+            </svg>
+            {/* HUD readout next to reticle (updated via refs, not state) */}
+            <div style={{
+              position: 'absolute',
+              top: 36, left: 40,
+              font: '600 9px var(--font-mono)',
+              color: flavor.color,
+              letterSpacing: '0.1em',
+              textShadow: `0 0 6px ${flavor.color}`,
+              whiteSpace: 'nowrap',
+            }}>
+              <div ref={readXRef} data-hero-readout-x="">X:0960</div>
+              <div ref={readYRef}>Y:0540</div>
+              <div style={{ marginTop: 2 }}>● LOCK</div>
+            </div>
           </div>
         </div>
       )}
 
       {/* moving liquid blob that follows cursor */}
-      <div className="liquid-blob" style={{
-        left: `calc(${cursor.x * 100}% - 300px)`,
-        top: `calc(${cursor.y * 100}% - 300px)`,
-        background: `radial-gradient(circle, ${flavor.color} 0%, transparent 60%)`,
-        transition: 'left 600ms cubic-bezier(0.22,1.2,0.36,1), top 600ms cubic-bezier(0.22,1.2,0.36,1)',
-      }}/>
+      <div aria-hidden="true" style={{
+        position: 'absolute', inset: 0,
+        pointerEvents: 'none',
+        transform: follow ? followTransform : 'none',
+        transition: 'transform 600ms cubic-bezier(0.22, 1, 0.36, 1)',
+      }}>
+        <div className="liquid-blob" style={{
+          left: 'calc(50% - 300px)',
+          top: 'calc(50% - 300px)',
+          background: `radial-gradient(circle, ${flavor.color} 0%, transparent 60%)`,
+          animationPlayState: play,
+        }}/>
+      </div>
 
       {/* slime drip splashes on click */}
-      {drips.map(d => (
-        <div key={d.id} style={{
-          position: 'absolute',
-          left: d.x - 60, top: d.y - 60,
-          width: 120, height: 120,
-          borderRadius: '50%',
-          background: `radial-gradient(circle, ${flavor.color}88, transparent 60%)`,
-          animation: 'slime-morph 1.4s ease-out forwards',
-          pointerEvents: 'none',
-          zIndex: 2,
-        }}/>
-      ))}
+      {drips.map(d => <HeroDrip key={d.id} x={d.x} y={d.y} color={flavor.color} reduced={reduced}/>)}
 
       {/* HUD overlays — top-left + top-right */}
-      <div className="container" style={{ position: 'absolute', top: 32, left: 0, right: 0, display: 'flex', justifyContent: 'space-between', zIndex: 5, pointerEvents: 'none' }}>
-        <div className="hud-pill"><span className="dot"/>SESSION ACTIVE · 03:42:18</div>
-        <div className="hud-pill" style={{ pointerEvents: 'auto' }}>
-          HYDRATION: <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{tickValue}%</span>
+      <div className="container" style={{
+        position: 'absolute', top: 32, left: 0, right: 0,
+        display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8,
+        padding: `0 ${padX}px`,
+        zIndex: 5, pointerEvents: 'none',
+      }}>
+        <div className="hud-pill" style={pillStyle}><span className="dot" style={{ animationPlayState: play }}/>SESSION ACTIVE · 03:42:18</div>
+        <div className="hud-pill" style={{ ...pillStyle, pointerEvents: 'auto' }}>
+          HYDRATION: <HeroHydration paused={offscreen}/>
         </div>
       </div>
 
       {/* HUD bottom-left + corner brackets */}
-      <div className="hud-frame-corners" style={{ inset: '80px 32px' }}/>
+      <div className="hud-frame-corners" style={{ inset: small ? '64px 10px' : narrow ? '72px 16px' : '80px 32px' }}/>
 
       {/* main grid */}
-      <div className="container" style={{
+      <div ref={gridRef} className="container" style={{
         position: 'relative', zIndex: 3,
-        minHeight: 'calc(100vh - 60px)',
-        display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: 48,
-        alignItems: 'center', padding: '80px 32px'
+        minHeight: narrow ? 0 : 'calc(100vh - 60px)',
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))',
+        gap: narrow ? 40 : 48,
+        alignItems: 'center',
+        padding: small ? `64px ${padX}px 88px` : narrow ? `80px ${padX}px 96px` : `80px ${padX}px`,
       }}>
         {/* Left — copy */}
-        <div style={{ position: 'relative' }}>
-          <div className="eyebrow" style={{ marginBottom: 24 }}>FUNCTIONAL HYDRATION · BUILT FOR GAMERS</div>
-          <h1 className="display-xl" style={{ marginBottom: 24 }}>
+        <div style={{ position: 'relative', minWidth: 0 }}>
+          <div ref={eyebrowRef} className="eyebrow" style={{ marginBottom: 24 }}>FUNCTIONAL HYDRATION · BUILT FOR GAMERS</div>
+          <h1 ref={h1Ref} className="display-xl" style={{ marginBottom: 24 }}>
             Late nights<br/>
             deserve<br/>
             <span style={{
@@ -167,33 +326,33 @@ function Hero({ flavor, onShop, onWatch }) {
             }}>
               better fuel.
               {/* dripping underline */}
-              <svg viewBox="0 0 600 80" style={{
+              <svg ref={underlineRef} viewBox="0 0 600 80" aria-hidden="true" style={{
                 position: 'absolute', bottom: -36, left: 0, width: '100%', height: 60, pointerEvents: 'none'
               }}>
                 <path d="M 0 10 Q 100 20 200 10 T 400 10 T 600 10" stroke="var(--accent)" strokeWidth="3" fill="none" opacity="0.7"/>
                 {[80, 200, 320, 480].map((cx, i) => (
                   <circle key={i} cx={cx} cy="10" r="3" fill="var(--accent)">
-                    <animate attributeName="cy" values={`10;${30 + i * 8};10`} dur={`${2 + i * 0.4}s`} repeatCount="indefinite"/>
-                    <animate attributeName="r" values="3;5;3" dur={`${2 + i * 0.4}s`} repeatCount="indefinite"/>
+                    {!reduced && <animate attributeName="cy" values={`10;${30 + i * 8};10`} dur={`${2 + i * 0.4}s`} repeatCount="indefinite"/>}
+                    {!reduced && <animate attributeName="r" values="3;5;3" dur={`${2 + i * 0.4}s`} repeatCount="indefinite"/>}
                   </circle>
                 ))}
               </svg>
             </span>
           </h1>
-          <p className="body-lg" style={{ maxWidth: 480, marginBottom: 36, marginTop: 32 }}>
+          <p ref={bodyRef} className="body-lg" style={{ maxWidth: 480, marginBottom: 36, marginTop: 32 }}>
             5g sugar. 75mg clean caffeine. Zero crash. Real electrolytes.<br/>
             The lemon-lime drink built for the long session.
           </p>
-          <div style={{ display: 'flex', gap: 12, marginBottom: 48 }}>
-            <button onClick={onShop} className="btn btn-primary btn-xl">
+          <div ref={ctaRef} style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 48 }}>
+            <button onClick={onShop} className="btn btn-primary btn-xl" style={{ whiteSpace: 'nowrap', ...(small ? { flex: '1 1 auto', justifyContent: 'center' } : null) }}>
               Shop the lineup <Icon name="arrow" size={18}/>
             </button>
-            <button onClick={onWatch} className="btn btn-secondary btn-xl">
+            <button onClick={onWatch} className="btn btn-secondary btn-xl" style={{ whiteSpace: 'nowrap', ...(small ? { flex: '1 1 auto', justifyContent: 'center' } : null) }}>
               <Icon name="bolt" size={16}/> Read the science
             </button>
           </div>
           {/* Inline metrics */}
-          <div style={{ display: 'flex', gap: 32, color: 'var(--fg-3)', flexWrap: 'wrap' }}>
+          <div ref={metricsRef} style={{ display: 'flex', columnGap: small ? 20 : 32, rowGap: 8, color: 'var(--fg-3)', flexWrap: 'wrap' }}>
             <span className="mono-sm" style={{ color: 'var(--fg-2)' }}>
               <span style={{ color: 'var(--accent)' }}>★ 4.8</span> · 12,400 REVIEWS
             </span>
@@ -202,86 +361,109 @@ function Hero({ flavor, onShop, onWatch }) {
           </div>
         </div>
 
-        {/* Right — Animated, reactive can */}
-        <div style={{ position: 'relative', height: 600, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-          {/* Slime puddle behind */}
-          <div style={{
-            position: 'absolute', width: 460, height: 460,
-            background: `radial-gradient(circle, ${flavor.color}55 0%, transparent 65%)`,
-            filter: 'blur(40px)',
-            animation: 'slime-morph 8s ease-in-out infinite',
-          }}/>
-
-          {/* Ring readout */}
-          <svg viewBox="0 0 500 500" style={{
-            position: 'absolute', width: 540, height: 540,
-            animation: 'slime-rotate 80s linear infinite',
-            opacity: 0.4,
-          }}>
-            <circle cx="250" cy="250" r="240" fill="none" stroke={flavor.color} strokeWidth="0.5" strokeDasharray="2 6"/>
-            <circle cx="250" cy="250" r="220" fill="none" stroke={flavor.color} strokeWidth="0.5" strokeDasharray="1 12"/>
-            <text x="250" y="20" textAnchor="middle" fontFamily="JetBrains Mono" fontSize="9" fill={flavor.color} letterSpacing="3">
-              CLEAN · CAFFEINE · ELECTROLYTES · NO CRASH · CLEAN · CAFFEINE · ELECTROLYTES · NO CRASH ·
-            </text>
-          </svg>
-
-          {/* Drip drops behind can */}
-          {[0, 1, 2, 3].map(i => (
-            <div key={i} style={{
-              position: 'absolute',
-              top: -40, left: `${30 + i * 12}%`,
-              width: 8, height: 12,
-              background: flavor.color,
-              borderRadius: '50% 50% 50% 50% / 60% 60% 40% 40%',
-              animation: `drip ${3 + i * 0.6}s ${i * 0.4}s infinite`,
-              filter: `drop-shadow(0 0 6px ${flavor.color})`,
-              opacity: 0.7,
+        {/* Right — Animated, reactive bottle */}
+        <div style={{ position: 'relative', minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }}>
+          <div style={{ position: 'relative', width: '100%', height: stageH, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            {/* Slime puddle behind */}
+            <div aria-hidden="true" style={{
+              position: 'absolute', width: puddleSize, height: puddleSize,
+              background: `radial-gradient(circle, ${flavor.color}55 0%, transparent 65%)`,
+              filter: 'blur(40px)',
+              animation: reduced ? 'none' : `slime-morph 8s ease-in-out infinite ${play}`,
             }}/>
-          ))}
 
-          {/* The can itself, reactive */}
-          <div style={{
-            position: 'relative',
-            transform: `rotateY(${tilt}deg) translateY(${liftY}px)`,
-            transition: 'transform 240ms cubic-bezier(0.22,1.2,0.36,1)',
-            transformStyle: 'preserve-3d',
-            filter: `drop-shadow(0 30px 60px ${flavor.color}55)`,
-          }}>
-            <Can flavor={flavor} height={580}/>
+            {/* Ring readout */}
+            <svg viewBox="0 0 500 500" aria-hidden="true" style={{
+              position: 'absolute', width: ringSize, height: ringSize,
+              animation: reduced ? 'none' : `slime-rotate 80s linear infinite ${play}`,
+              opacity: 0.4,
+            }}>
+              <circle cx="250" cy="250" r="240" fill="none" stroke={flavor.color} strokeWidth="0.5" strokeDasharray="2 6"/>
+              <circle cx="250" cy="250" r="220" fill="none" stroke={flavor.color} strokeWidth="0.5" strokeDasharray="1 12"/>
+              <text x="250" y="20" textAnchor="middle" fontSize="9" fill={flavor.color} letterSpacing="3" style={{ fontFamily: 'var(--font-mono)' }}>
+                CLEAN · CAFFEINE · ELECTROLYTES · NO CRASH · CLEAN · CAFFEINE · ELECTROLYTES · NO CRASH ·
+              </text>
+            </svg>
+
+            {/* Drip drops behind bottle (skipped under reduced motion) */}
+            {!reduced && [0, 1, 2, 3].map(i => (
+              <div key={i} aria-hidden="true" style={{
+                position: 'absolute',
+                top: -40, left: `${30 + i * 12}%`,
+                width: 8, height: 12,
+                background: flavor.color,
+                borderRadius: '50% 50% 50% 50% / 60% 60% 40% 40%',
+                animation: `drip ${3 + i * 0.6}s ${i * 0.4}s infinite ${play}`,
+                filter: `drop-shadow(0 0 6px ${flavor.color})`,
+                opacity: 0.7,
+              }}/>
+            ))}
+
+            {/* The bottle itself, reactive. Outer wrapper owns the entrance; inner owns tilt/lift. */}
+            <div ref={bottleRef} data-hero-bottle="" style={{ position: 'relative' }}>
+              <div style={{
+                position: 'relative',
+                transform: follow
+                  ? 'rotateY(calc((var(--mx, 0.5) - 0.5) * 8deg)) translateY(calc((var(--my, 0.5) - 0.5) * -10px))'
+                  : 'none',
+                transition: `transform 240ms ${heroEase}`,
+                transformStyle: 'preserve-3d',
+                filter: `drop-shadow(0 30px 60px ${flavor.color}55)`,
+              }}>
+                {canEl}
+              </div>
+            </div>
+
+            {/* Stat callouts pinned around the bottle (wide layouts) */}
+            {!narrow && (
+              <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, margin: '0 auto', width: 'min(100%, 580px)' }}>
+                {heroPins.map(p => <CalloutPin key={p.label} {...p}/>)}
+              </div>
+            )}
           </div>
 
-          {/* Stat callouts pinned around */}
-          <CalloutPin x="-8%" y="22%" label="CAFFEINE" value="75mg" sub="clean · slow-release"/>
-          <CalloutPin x="86%" y="34%" label="SUGAR" value="5g" sub="real fruit · low gi"/>
-          <CalloutPin x="-12%" y="68%" label="CRASH" value="0" sub="all session"/>
-          <CalloutPin x="84%" y="78%" label="VOL" value="12oz" sub="slim can"/>
+          {/* Stat callouts as a 2×2 grid under the bottle (narrow layouts) */}
+          {narrow && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, width: '100%', maxWidth: 480 }}>
+              {heroPins.map(p => <CalloutPin key={p.label} {...p} stacked/>)}
+            </div>
+          )}
         </div>
       </div>
 
       {/* Bottom HUD: scroll cue */}
-      <div className="container" style={{ position: 'absolute', bottom: 24, left: 0, right: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 5 }}>
-        <span className="mono-sm" style={{ color: 'var(--fg-3)' }}>// CLICK ANYWHERE TO DRIP</span>
-        <span className="mono-sm" style={{ color: 'var(--fg-3)' }}>SCROLL FOR LINEUP <Icon name="arrowDown" size={12}/></span>
+      <div className="container" style={{
+        position: 'absolute', bottom: 24, left: 0, right: 0,
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8,
+        padding: `0 ${padX}px`,
+        zIndex: 5,
+      }}>
+        <span className="mono-sm" style={{ color: 'var(--fg-3)', ...(small ? { fontSize: 10 } : null) }}>
+          {finePointer ? '// CLICK ANYWHERE TO DRIP' : '// TAP ANYWHERE TO DRIP'}
+        </span>
+        <span className="mono-sm" style={{ color: 'var(--fg-3)', ...(small ? { fontSize: 10 } : null) }}>SCROLL FOR LINEUP <Icon name="arrowDown" size={12}/></span>
       </div>
     </section>
   );
 }
 
-function CalloutPin({ x, y, label, value, sub }) {
+function CalloutPin({ x, y, label, value, sub, stacked = false }) {
   return (
-    <div style={{
-      position: 'absolute', left: x, top: y,
+    <div data-hero-pin="" style={{
+      position: stacked ? 'relative' : 'absolute',
+      left: stacked ? undefined : x,
+      top: stacked ? undefined : y,
       background: 'rgba(6, 13, 8, 0.85)',
       backdropFilter: 'blur(8px)',
       border: '1px solid var(--accent)',
       borderRadius: 12,
       padding: '10px 14px',
-      minWidth: 140,
+      minWidth: stacked ? 0 : 140,
       boxShadow: '0 0 16px var(--accent-soft)',
       zIndex: 4,
     }}>
       <div className="mono-sm" style={{ color: 'var(--fg-3)', fontSize: 9 }}>{label}</div>
-      <div style={{ font: '700 22px/1 JetBrains Mono', color: 'var(--accent)', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>{value}</div>
+      <div style={{ font: '700 22px/1 var(--font-mono)', color: 'var(--accent)', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>{value}</div>
       <div className="mono-sm" style={{ color: 'var(--fg-4)', fontSize: 9, marginTop: 4 }}>{sub}</div>
       <span style={{
         position: 'absolute', top: -3, right: -3,
