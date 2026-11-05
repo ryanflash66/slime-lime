@@ -33,6 +33,16 @@ const heroPins = [
   { x: heroPinRight('84%'), y: '78%', label: 'VOL', value: '12oz', sub: 'slim can' },
 ];
 
+// Fallback for "Read the science" when no onWatch is passed: same target as the footer's
+// "The science" link (/story#science). The router resets scroll on hashchange, so scroll after it.
+function heroReadScience() {
+  window.location.hash = '/story#science';
+  setTimeout(() => {
+    const el = document.getElementById('science');
+    if (el) el.scrollIntoView({ block: 'start' });
+  }, 60);
+}
+
 // Hydration readout ticks in its own component so the hero (and its bottle SVG) doesn't re-render.
 function HeroHydration({ paused }) {
   const [value, setValue] = useStateH(75);
@@ -90,7 +100,9 @@ function Hero({ flavor, onShop, onWatch }) {
 
   const finePointer = heroUseMedia('(hover: hover) and (pointer: fine)');
   const reduced = heroUseMedia('(prefers-reduced-motion: reduce)');
-  const narrow = heroUseMedia('(max-width: 899px)');
+  // One-column layout. The grid below is forced to a single column under the same query, so callout
+  // placement and grid stacking can't disagree (auto-fit alone would collapse at a scrollbar-dependent ~960px).
+  const narrow = heroUseMedia('(max-width: 979px)');
   const small = heroUseMedia('(max-width: 600px)');
 
   const [active, setActive] = useStateH(false); // pointer over the hero, not over a control
@@ -98,25 +110,29 @@ function Hero({ flavor, onShop, onWatch }) {
   const [offscreen, setOffscreen] = useStateH(false);
 
   // Cursor tracking: write --mx/--my (0–1) on the section once per frame; no React state per move.
+  // --mx-px/--my-px let the 64px reticle move by transform without a hero-sized blend layer.
   useEffectH(() => {
     const el = ref.current;
     if (!el || !finePointer) return;
-    let raf = 0, px = 0.5, py = 0.5, shown = false;
+    let raf = 0, px = 0.5, py = 0.5, w = 0, h = 0, shown = false;
     const pad = n => String(n).padStart(4, '0');
     const flush = () => {
       raf = 0;
       el.style.setProperty('--mx', px.toFixed(4));
       el.style.setProperty('--my', py.toFixed(4));
+      el.style.setProperty('--mx-px', (px * w).toFixed(1) + 'px');
+      el.style.setProperty('--my-px', (py * h).toFixed(1) + 'px');
       if (readXRef.current) readXRef.current.textContent = 'X:' + pad(Math.round(px * 1920));
       if (readYRef.current) readYRef.current.textContent = 'Y:' + pad(Math.round(py * 1080));
     };
     const onMove = e => {
       const rect = el.getBoundingClientRect();
-      px = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-      py = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+      w = rect.width; h = rect.height;
+      px = Math.min(1, Math.max(0, (e.clientX - rect.left) / w));
+      py = Math.min(1, Math.max(0, (e.clientY - rect.top) / h));
       const show = !(e.target instanceof Element && e.target.closest(heroInteractive));
       if (show !== shown) {
-        if (show) flush(); // place the reticle before it fades in
+        if (show) { cancelAnimationFrame(raf); flush(); } // place the reticle before it fades in
         shown = show;
         setActive(show);
       }
@@ -129,6 +145,7 @@ function Hero({ flavor, onShop, onWatch }) {
       cancelAnimationFrame(raf);
       el.removeEventListener('mousemove', onMove);
       el.removeEventListener('mouseleave', onLeave);
+      setActive(false); // keep React state in sync with the reset local `shown`
     };
   }, [finePointer]);
 
@@ -144,9 +161,11 @@ function Hero({ flavor, onShop, onWatch }) {
     const svg = underlineRef.current;
     if (!svg || typeof svg.pauseAnimations !== 'function') return;
     if (offscreen) svg.pauseAnimations(); else svg.unpauseAnimations();
-  }, [offscreen, reduced]);
+  }, [offscreen]);
 
   // First-load entrance, once per session. Fill 'backwards' only, so nothing lingers or blocks clicks.
+  // Layout effect so the first keyframe applies before paint (React.useLayoutEffect is used directly to
+  // keep the shared hook-alias line at the top of this file untouched).
   React.useLayoutEffect(() => {
     let seen = false;
     try {
@@ -157,7 +176,7 @@ function Hero({ flavor, onShop, onWatch }) {
     const run = (el, keyframes, opts) => {
       if (el && typeof el.animate === 'function') el.animate(keyframes, { fill: 'backwards', ...opts });
     };
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (reduced) {
       run(gridRef.current, [{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'linear' });
       return;
     }
@@ -193,7 +212,6 @@ function Hero({ flavor, onShop, onWatch }) {
   const stageH = narrow ? bottleH + 40 : 600;
   const ringSize = Math.round(bottleH * 0.93);
   const puddleSize = Math.round(bottleH * 0.8);
-  const padX = small ? 20 : 32;
   const pillStyle = small ? { fontSize: 9, padding: '5px 8px', whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' };
   // Memoized so hover/drip re-renders don't rebuild the bottle SVG.
   const canEl = useMemoH(() => <Can flavor={flavor} height={bottleH}/>, [flavor, bottleH]);
@@ -213,57 +231,56 @@ function Hero({ flavor, onShop, onWatch }) {
       {/* Video-game targeting reticle following cursor (fine pointers only) */}
       {finePointer && (
         <div data-hero-reticle="" aria-hidden="true" style={{
-          position: 'absolute', inset: 0,
+          position: 'absolute', left: 0, top: 0,
+          width: 64, height: 64,
           pointerEvents: 'none',
           zIndex: 20,
           mixBlendMode: 'screen',
-          transform: followTransform,
+          transform: 'translate3d(calc(var(--mx-px, 50vw) - 32px), calc(var(--my-px, 50vh) - 32px), 0)',
           opacity: showReticle ? 1 : 0,
           transition: `opacity 150ms ${heroEase}`,
         }}>
-          <div style={{ position: 'absolute', left: '50%', top: '50%', width: 64, height: 64, marginLeft: -32, marginTop: -32 }}>
-            <svg viewBox="0 0 64 64" width="64" height="64" style={{ filter: `drop-shadow(0 0 6px ${flavor.color})` }}>
-              {/* Outer rotating ring */}
-              <g style={{
-                transformOrigin: '32px 32px',
-                animation: reduced ? 'none' : `slime-rotate 6s linear infinite ${showReticle ? 'running' : 'paused'}`,
-              }}>
-                <circle cx="32" cy="32" r="26" fill="none" stroke={flavor.color} strokeWidth="1" strokeDasharray="3 3" opacity="0.6"/>
-              </g>
-              {/* Inner ring */}
-              <circle cx="32" cy="32" r="18" fill="none" stroke={flavor.color} strokeWidth="1.5"/>
-              {/* Corner brackets */}
-              <path d="M 8 14 L 8 8 L 14 8" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
-              <path d="M 50 8 L 56 8 L 56 14" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
-              <path d="M 56 50 L 56 56 L 50 56" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
-              <path d="M 14 56 L 8 56 L 8 50" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
-              {/* Crosshair lines (with gap in center) */}
-              <line x1="32" y1="0" x2="32" y2="22" stroke={flavor.color} strokeWidth="1.5"/>
-              <line x1="32" y1="42" x2="32" y2="64" stroke={flavor.color} strokeWidth="1.5"/>
-              <line x1="0" y1="32" x2="22" y2="32" stroke={flavor.color} strokeWidth="1.5"/>
-              <line x1="42" y1="32" x2="64" y2="32" stroke={flavor.color} strokeWidth="1.5"/>
-              {/* Center dot */}
-              <circle cx="32" cy="32" r="2" fill={flavor.color}/>
-              {/* Pulse ring */}
-              <circle cx="32" cy="32" r="14" fill="none" stroke={flavor.color} strokeWidth="1" opacity="0.5">
-                {showReticle && !reduced && <animate attributeName="r" values="14;28;14" dur="1.6s" repeatCount="indefinite"/>}
-                {showReticle && !reduced && <animate attributeName="opacity" values="0.6;0;0.6" dur="1.6s" repeatCount="indefinite"/>}
-              </circle>
-            </svg>
-            {/* HUD readout next to reticle (updated via refs, not state) */}
-            <div style={{
-              position: 'absolute',
-              top: 36, left: 40,
-              font: '600 9px var(--font-mono)',
-              color: flavor.color,
-              letterSpacing: '0.1em',
-              textShadow: `0 0 6px ${flavor.color}`,
-              whiteSpace: 'nowrap',
+          <svg viewBox="0 0 64 64" width="64" height="64" style={{ filter: `drop-shadow(0 0 6px ${flavor.color})` }}>
+            {/* Outer rotating ring */}
+            <g style={{
+              transformOrigin: '32px 32px',
+              animation: reduced ? 'none' : `slime-rotate 6s linear infinite ${showReticle ? 'running' : 'paused'}`,
             }}>
-              <div ref={readXRef} data-hero-readout-x="">X:0960</div>
-              <div ref={readYRef}>Y:0540</div>
-              <div style={{ marginTop: 2 }}>● LOCK</div>
-            </div>
+              <circle cx="32" cy="32" r="26" fill="none" stroke={flavor.color} strokeWidth="1" strokeDasharray="3 3" opacity="0.6"/>
+            </g>
+            {/* Inner ring */}
+            <circle cx="32" cy="32" r="18" fill="none" stroke={flavor.color} strokeWidth="1.5"/>
+            {/* Corner brackets */}
+            <path d="M 8 14 L 8 8 L 14 8" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
+            <path d="M 50 8 L 56 8 L 56 14" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
+            <path d="M 56 50 L 56 56 L 50 56" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
+            <path d="M 14 56 L 8 56 L 8 50" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
+            {/* Crosshair lines (with gap in center) */}
+            <line x1="32" y1="0" x2="32" y2="22" stroke={flavor.color} strokeWidth="1.5"/>
+            <line x1="32" y1="42" x2="32" y2="64" stroke={flavor.color} strokeWidth="1.5"/>
+            <line x1="0" y1="32" x2="22" y2="32" stroke={flavor.color} strokeWidth="1.5"/>
+            <line x1="42" y1="32" x2="64" y2="32" stroke={flavor.color} strokeWidth="1.5"/>
+            {/* Center dot */}
+            <circle cx="32" cy="32" r="2" fill={flavor.color}/>
+            {/* Pulse ring */}
+            <circle cx="32" cy="32" r="14" fill="none" stroke={flavor.color} strokeWidth="1" opacity="0.5">
+              {showReticle && !reduced && <animate attributeName="r" values="14;28;14" dur="1.6s" repeatCount="indefinite"/>}
+              {showReticle && !reduced && <animate attributeName="opacity" values="0.6;0;0.6" dur="1.6s" repeatCount="indefinite"/>}
+            </circle>
+          </svg>
+          {/* HUD readout next to reticle (updated via refs, not state) */}
+          <div style={{
+            position: 'absolute',
+            top: 36, left: 40,
+            font: '600 9px var(--font-mono)',
+            color: flavor.color,
+            letterSpacing: '0.1em',
+            textShadow: `0 0 6px ${flavor.color}`,
+            whiteSpace: 'nowrap',
+          }}>
+            <div ref={readXRef} data-hero-readout-x="">X:0960</div>
+            <div ref={readYRef}>Y:0540</div>
+            <div style={{ marginTop: 2 }}>● LOCK</div>
           </div>
         </div>
       )}
@@ -290,7 +307,6 @@ function Hero({ flavor, onShop, onWatch }) {
       <div className="container" style={{
         position: 'absolute', top: 32, left: 0, right: 0,
         display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8,
-        padding: `0 ${padX}px`,
         zIndex: 5, pointerEvents: 'none',
       }}>
         <div className="hud-pill" style={pillStyle}><span className="dot" style={{ animationPlayState: play }}/>SESSION ACTIVE · 03:42:18</div>
@@ -307,10 +323,11 @@ function Hero({ flavor, onShop, onWatch }) {
         position: 'relative', zIndex: 3,
         minHeight: narrow ? 0 : 'calc(100vh - 60px)',
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))',
+        gridTemplateColumns: narrow ? 'minmax(0, 1fr)' : 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))',
         gap: narrow ? 40 : 48,
         alignItems: 'center',
-        padding: small ? `64px ${padX}px 88px` : narrow ? `80px ${padX}px 96px` : `80px ${padX}px`,
+        paddingTop: small ? 64 : 80,
+        paddingBottom: small ? 88 : narrow ? 96 : 80,
       }}>
         {/* Left — copy */}
         <div style={{ position: 'relative', minWidth: 0 }}>
@@ -347,7 +364,7 @@ function Hero({ flavor, onShop, onWatch }) {
             <button onClick={onShop} className="btn btn-primary btn-xl" style={{ whiteSpace: 'nowrap', ...(small ? { flex: '1 1 auto', justifyContent: 'center' } : null) }}>
               Shop the lineup <Icon name="arrow" size={18}/>
             </button>
-            <button onClick={onWatch} className="btn btn-secondary btn-xl" style={{ whiteSpace: 'nowrap', ...(small ? { flex: '1 1 auto', justifyContent: 'center' } : null) }}>
+            <button onClick={onWatch || heroReadScience} className="btn btn-secondary btn-xl" style={{ whiteSpace: 'nowrap', ...(small ? { flex: '1 1 auto', justifyContent: 'center' } : null) }}>
               <Icon name="bolt" size={16}/> Read the science
             </button>
           </div>
@@ -435,7 +452,6 @@ function Hero({ flavor, onShop, onWatch }) {
       <div className="container" style={{
         position: 'absolute', bottom: 24, left: 0, right: 0,
         display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8,
-        padding: `0 ${padX}px`,
         zIndex: 5,
       }}>
         <span className="mono-sm" style={{ color: 'var(--fg-3)', ...(small ? { fontSize: 10 } : null) }}>
