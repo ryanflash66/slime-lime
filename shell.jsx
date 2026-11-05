@@ -67,7 +67,7 @@ function Wordmark({ size = 22, withMark = true, color = 'var(--fg-1)' }) {
              style={{ height: size * 1.7, width: 'auto', display: 'block', filter: 'drop-shadow(0 0 12px var(--accent-glow))' }}/>
       )}
       <span style={{
-        fontFamily: 'Bricolage Grotesque, Space Grotesk, sans-serif',
+        fontFamily: 'var(--font-display)',
         fontWeight: 800, fontSize: size, letterSpacing: '-0.04em',
         color, lineHeight: 1, position: 'relative'
       }}>
@@ -131,18 +131,88 @@ function useCart() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// SHELL HELPERS (prefixed: all scripts share one global scope)
+// ─────────────────────────────────────────────────────────────
+function shellMatches(query) {
+  return typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia(query).matches;
+}
+
+function shellUseMedia(query) {
+  const [matches, setMatches] = useState(() => shellMatches(query));
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia(query);
+    const onChange = () => setMatches(mql.matches);
+    onChange();
+    if (mql.addEventListener) mql.addEventListener('change', onChange);
+    else mql.addListener(onChange);
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener('change', onChange);
+      else mql.removeListener(onChange);
+    };
+  }, [query]);
+  return matches;
+}
+
+const SHELL_REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
+const SHELL_EASE_OUT = 'cubic-bezier(0.23, 1, 0.32, 1)';
+const SHELL_EASE_DRAWER = 'var(--ease-drawer, cubic-bezier(0.32, 0.72, 0, 1))';
+
+// One-shot WAAPI enter; opacity-only under reduced motion.
+function shellAnimateIn(el, { y = 4, duration = 200 } = {}) {
+  if (!el || typeof el.animate !== 'function') return;
+  const frames = shellMatches(SHELL_REDUCED_MOTION)
+    ? [{ opacity: 0 }, { opacity: 1 }]
+    : [{ opacity: 0, transform: `translateY(${y}px)` }, { opacity: 1, transform: 'none' }];
+  el.animate(frames, { duration, easing: SHELL_EASE_OUT });
+}
+
+const shellSrOnly = {
+  position: 'absolute', width: 1, height: 1, padding: 0, margin: -1,
+  overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0,
+};
+
+const SHELL_TITLES = [
+  ['/flagship',  'Lemon · Lime — Slime Lime'],
+  ['/subscribe', 'Subscribe — Slime Lime'],
+  ['/story',     'Our story — Slime Lime'],
+  ['/faq',       'FAQ — Slime Lime'],
+];
+const SHELL_HOME_TITLE = 'Slime Lime — Late nights deserve better fuel.';
+
+function shellTitleFor(route) {
+  const hit = SHELL_TITLES.find(([path]) => route.startsWith(path));
+  return hit ? hit[1] : SHELL_HOME_TITLE;
+}
+
+const SHELL_FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// ─────────────────────────────────────────────────────────────
 // HASH ROUTER
 // ─────────────────────────────────────────────────────────────
 function useRoute() {
   const [route, setRoute] = useState(() => window.location.hash.slice(1) || '/');
   useEffect(() => {
     const onHash = () => {
-      setRoute(window.location.hash.slice(1) || '/');
-      window.scrollTo(0, 0);
+      const next = window.location.hash.slice(1) || '/';
+      setRoute(next);
+      // In-page anchors ("/story#science") are scrolled to after render, below.
+      if (!next.includes('#')) window.scrollTo(0, 0);
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+  useEffect(() => {
+    document.title = shellTitleFor(route);
+    const anchor = route.split('#')[1];
+    if (!anchor) return;
+    const el = document.getElementById(anchor);
+    if (!el) { window.scrollTo(0, 0); return; }
+    // Offset by the sticky header so the target isn't tucked underneath it.
+    const header = document.querySelector('header');
+    const offset = header ? header.offsetHeight : 0;
+    window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - offset });
+  }, [route]);
   return route;
 }
 
@@ -153,29 +223,83 @@ function navTo(path) {
 // ─────────────────────────────────────────────────────────────
 // NAV
 // ─────────────────────────────────────────────────────────────
+const SHELL_NAV_LINKS = [
+  { label: 'Shop',      path: '/' },
+  { label: 'Flagship',  path: '/flagship' },
+  { label: 'Subscribe', path: '/subscribe' },
+  { label: 'Story',     path: '/story' },
+  { label: 'FAQ',       path: '/faq' },
+];
+
+function shellIsActive(path, route) {
+  return (path === '/' && (route === '/' || route === '')) || (path !== '/' && route.startsWith(path));
+}
+
 function Nav({ cartCount, onCart, route }) {
   const [scrolled, setScrolled] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const narrow = shellUseMedia('(max-width: 899px)');
+  const compact = shellUseMedia('(max-width: 599px)');
+  const headerRef = useRef(null);
+  const burgerRef = useRef(null);
+  const panelRef = useRef(null);
+
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
-    window.addEventListener('scroll', onScroll);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
-  const links = [
-    { label: 'Shop',      path: '/' },
-    { label: 'Flagship',  path: '/flagship' },
-    { label: 'Subscribe', path: '/subscribe' },
-    { label: 'Story',     path: '/story' },
-    { label: 'FAQ',       path: '/faq' },
-  ];
+  // Close the disclosure on route change and when leaving the narrow layout.
+  useEffect(() => { setMenuOpen(false); }, [route]);
+  useEffect(() => { if (!narrow) setMenuOpen(false); }, [narrow]);
+
+  // Escape closes (focus back to the toggle); clicking outside the header closes.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = e => {
+      if (e.key === 'Escape') {
+        setMenuOpen(false);
+        if (burgerRef.current) burgerRef.current.focus();
+      }
+    };
+    const onPointer = e => {
+      if (headerRef.current && !headerRef.current.contains(e.target)) setMenuOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPointer);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPointer);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (menuOpen) shellAnimateIn(panelRef.current, { y: -4, duration: 180 });
+  }, [menuOpen]);
+
+  const go = path => e => {
+    e.preventDefault();
+    setMenuOpen(false);
+    navTo(path);
+  };
+
+  const utilityButtons = (
+    <>
+      <button className="iconbtn" aria-label="Search"><Icon name="search" size={18}/></button>
+      <button className="iconbtn" aria-label="Account"><Icon name="user" size={18}/></button>
+    </>
+  );
 
   return (
-    <header style={{
+    <header ref={headerRef} style={{
       position: 'sticky', top: 0, zIndex: 80,
-      backdropFilter: scrolled ? 'blur(14px)' : 'none',
-      background: scrolled ? 'rgba(6, 13, 8, 0.78)' : 'transparent',
+      backdropFilter: scrolled || menuOpen ? 'blur(14px)' : 'none',
+      WebkitBackdropFilter: scrolled || menuOpen ? 'blur(14px)' : 'none',
+      background: scrolled || menuOpen ? 'rgba(6, 13, 8, 0.78)' : 'transparent',
       borderBottom: scrolled ? '1px solid var(--border-1)' : '1px solid transparent',
-      transition: 'all 200ms ease'
+      transition: `background-color 200ms ${SHELL_EASE_OUT}, border-color 200ms ${SHELL_EASE_OUT}`
     }}>
       {/* Top HUD strip */}
       <div style={{
@@ -184,61 +308,115 @@ function Nav({ cartCount, onCart, route }) {
         padding: '8px 0',
         overflow: 'hidden'
       }}>
-        <div className="container" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 24 }}>
-          <span className="mono-sm" style={{ color: 'var(--fg-3)' }}>
-            <span style={{ color: 'var(--accent)' }}>●</span>&nbsp;&nbsp;FREE SHIPPING ON ORDERS $40+
+        <div className="container" style={{ display: 'flex', justifyContent: narrow ? 'center' : 'space-between', alignItems: 'center', gap: 24 }}>
+          <span className="mono-sm" style={{ color: 'var(--fg-3)', whiteSpace: 'nowrap' }}>
+            <span aria-hidden="true" style={{ color: 'var(--accent)' }}>●</span>&nbsp;&nbsp;FREE SHIPPING ON ORDERS $40+
           </span>
-          <span className="mono-sm" style={{ color: 'var(--fg-3)', display: 'flex', gap: 16 }}>
-            <span>SUBSCRIBE → SAVE 28%</span>
-            <span style={{ opacity: 0.4 }}>|</span>
-            <span>NEW: MANGO + GRAPE</span>
-          </span>
+          {!narrow && (
+            <span className="mono-sm" style={{ color: 'var(--fg-3)', display: 'flex', gap: 16 }}>
+              <span>SUBSCRIBE → SAVE 28%</span>
+              <span aria-hidden="true" style={{ opacity: 0.4 }}>|</span>
+              <span>NEW: MANGO + GRAPE</span>
+            </span>
+          )}
         </div>
       </div>
 
       {/* Main nav */}
       <div className="container" style={{
-        padding: '16px 32px',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+        paddingTop: narrow ? 12 : 16, paddingBottom: narrow ? 12 : 16,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12
       }}>
-        <a href="#/" onClick={e => { e.preventDefault(); navTo('/'); }} style={{ display: 'flex', textDecoration: 'none' }}>
-          <Wordmark size={22}/>
+        <a href="#/" onClick={go('/')} aria-label="Slime Lime home" style={{ display: 'flex', textDecoration: 'none', flexShrink: 0 }}>
+          <Wordmark size={narrow ? 18 : 22}/>
         </a>
-        <nav style={{ display: 'flex', gap: 28 }}>
-          {links.map(l => {
-            const active = (l.path === '/' && (route === '/' || route === '')) || (l.path !== '/' && route.startsWith(l.path));
-            return (
-              <a key={l.path} href={`#${l.path}`}
-                 onClick={e => { e.preventDefault(); navTo(l.path); }}
-                 style={{
-                   font: '500 14px/1 Space Grotesk, sans-serif',
-                   color: active ? 'var(--fg-1)' : 'var(--fg-2)',
-                   textDecoration: 'none',
-                   position: 'relative',
-                   padding: '6px 0',
-                   transition: 'color 180ms'
-                 }}>
-                {l.label}
-                {active && (
-                  <span style={{
-                    position: 'absolute', bottom: -2, left: 0, right: 0,
-                    height: 2, background: 'var(--accent)',
-                    boxShadow: '0 0 8px var(--accent-glow)'
-                  }}/>
-                )}
-              </a>
-            );
-          })}
-        </nav>
+        {!narrow && (
+          <nav aria-label="Primary" style={{ display: 'flex', gap: 28 }}>
+            {SHELL_NAV_LINKS.map(l => {
+              const active = shellIsActive(l.path, route);
+              return (
+                <a key={l.path} href={`#${l.path}`}
+                   onClick={go(l.path)}
+                   aria-current={active ? 'page' : undefined}
+                   style={{
+                     font: '500 14px/1 var(--font-ui)',
+                     color: active ? 'var(--fg-1)' : 'var(--fg-2)',
+                     textDecoration: 'none',
+                     position: 'relative',
+                     padding: '6px 0',
+                     transition: `color 180ms ${SHELL_EASE_OUT}`
+                   }}>
+                  {l.label}
+                  {active && (
+                    <span aria-hidden="true" style={{
+                      position: 'absolute', bottom: -2, left: 0, right: 0,
+                      height: 2, background: 'var(--accent)',
+                      boxShadow: '0 0 8px var(--accent-glow)'
+                    }}/>
+                  )}
+                </a>
+              );
+            })}
+          </nav>
+        )}
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <button className="iconbtn"><Icon name="search" size={18}/></button>
-          <button className="iconbtn"><Icon name="user" size={18}/></button>
-          <button onClick={onCart} className="btn btn-primary" style={{ padding: '11px 16px' }}>
+          {!compact && utilityButtons}
+          <button onClick={() => { setMenuOpen(false); onCart(); }} className="btn btn-primary" style={{ padding: '11px 16px', whiteSpace: 'nowrap' }}>
             <Icon name="cart" size={16}/>
             <span>Fridge · {cartCount}</span>
           </button>
+          {narrow && (
+            <button ref={burgerRef} className="iconbtn"
+                    aria-label="Menu" aria-expanded={menuOpen} aria-controls="shell-nav-panel"
+                    onClick={() => setMenuOpen(o => !o)}>
+              <Icon name={menuOpen ? 'x' : 'menu'} size={18}/>
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Narrow-screen disclosure panel */}
+      {narrow && (
+        <nav id="shell-nav-panel" ref={panelRef} aria-label="Primary" hidden={!menuOpen} style={{
+          position: 'absolute', top: '100%', left: 0, right: 0,
+          background: 'var(--ink-900)',
+          maxHeight: 'calc(100dvh - 100px)', overflowY: 'auto', overscrollBehavior: 'contain',
+          borderTop: '1px solid var(--border-1)',
+          borderBottom: '1px solid var(--border-2)',
+          boxShadow: '0 30px 60px rgba(0,0,0,0.5)'
+        }}>
+          <div className="container" style={{ paddingTop: 8, paddingBottom: 20 }}>
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+              {SHELL_NAV_LINKS.map(l => {
+                const active = shellIsActive(l.path, route);
+                return (
+                  <li key={l.path} style={{ borderBottom: '1px solid var(--border-1)' }}>
+                    <a href={`#${l.path}`} onClick={go(l.path)}
+                       aria-current={active ? 'page' : undefined}
+                       style={{
+                         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                         padding: '16px 0',
+                         font: '600 18px/1 var(--font-ui)',
+                         color: active ? 'var(--accent)' : 'var(--fg-1)',
+                         textDecoration: 'none'
+                       }}>
+                      {l.label}
+                      <span aria-hidden="true" style={{ color: active ? 'var(--accent)' : 'var(--fg-4)', display: 'flex' }}>
+                        <Icon name="chevR" size={16}/>
+                      </span>
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+            {compact && (
+              <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+                {utilityButtons}
+              </div>
+            )}
+          </div>
+        </nav>
+      )}
     </header>
   );
 }
@@ -246,29 +424,189 @@ function Nav({ cartCount, onCart, route }) {
 // ─────────────────────────────────────────────────────────────
 // CART DRAWER
 // ─────────────────────────────────────────────────────────────
-function CartDrawer({ open, items, onClose, onInc, onDec, total }) {
+function ShellCartRow({ item: i, animateIn, onInc, onDec }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    if (animateIn) shellAnimateIn(ref.current);
+  }, []);
   return (
-    <>
-      <div onClick={onClose} style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+    <li ref={ref} style={{
+      display: 'flex', gap: 12, padding: 12,
+      border: '1px solid var(--border-1)', borderRadius: 18,
+      background: 'var(--surface-card)', alignItems: 'center'
+    }}>
+      {/* mini glass-bottle thumbnail */}
+      <div aria-hidden="true" style={{ width: 48, height: 70, flexShrink: 0, position: 'relative' }}>
+        <svg viewBox="0 0 60 86" width="48" height="70" style={{ display: 'block', overflow: 'visible' }}>
+          <defs>
+            <linearGradient id={`mini-j-${i.id}`} x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0" stopColor={i.color} stopOpacity="0.7"/>
+              <stop offset="0.5" stopColor={i.color}/>
+              <stop offset="1" stopColor={i.accent}/>
+            </linearGradient>
+            <linearGradient id={`mini-c-${i.id}`} x1="0" x2="1">
+              <stop offset="0" stopColor="#6a6a6a"/>
+              <stop offset="0.4" stopColor="#fafafa"/>
+              <stop offset="0.7" stopColor="#bdbdbd"/>
+              <stop offset="1" stopColor="#4e4e4e"/>
+            </linearGradient>
+          </defs>
+          {/* shadow */}
+          <ellipse cx="30" cy="82" rx="22" ry="2" fill="rgba(0,0,0,0.5)"/>
+          {/* bottle body — square juice silhouette */}
+          <path d="M 8 80 L 8 24 Q 8 21 11 19 L 16 14 Q 18 12 18 10 L 18 8 Q 18 6 20 6 L 40 6 Q 42 6 42 8 L 42 10 Q 42 12 44 14 L 49 19 Q 52 21 52 24 L 52 80 Q 52 82 50 82 L 10 82 Q 8 82 8 80 Z"
+                fill={`url(#mini-j-${i.id})`} stroke="rgba(0,0,0,0.25)" strokeWidth="0.5"/>
+          {/* glass shine */}
+          <rect x="10" y="22" width="3" height="56" fill="rgba(255,255,255,0.45)" rx="1"/>
+          <rect x="46" y="22" width="2" height="56" fill="rgba(255,255,255,0.25)" rx="1"/>
+          {/* meniscus */}
+          <ellipse cx="30" cy="22" rx="20" ry="1.4" fill="rgba(255,255,255,0.5)"/>
+          {/* cap */}
+          <rect x="18" y="2" width="24" height="9" rx="0.6" fill={`url(#mini-c-${i.id})`}/>
+          <rect x="18" y="2" width="24" height="1.6" fill="rgba(255,255,255,0.6)"/>
+          {/* label blob */}
+          <ellipse cx="30" cy="56" rx="17" ry="14" fill="#ffffff"/>
+          <text x="30" y="60" textAnchor="middle"
+                fontWeight="800" fontSize="11"
+                letterSpacing="-0.5"
+                style={{ fontFamily: 'var(--font-display)' }}
+                fill={i.accent}>SL</text>
+        </svg>
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ font: '600 14px var(--font-ui)' }}>{i.name}</div>
+        <div style={{ font: '400 11px var(--font-mono)', color: 'var(--fg-3)', marginTop: 2 }}>${i.price.toFixed(2)}/CAN · {i.sub}</div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, border: '1px solid var(--border-2)', borderRadius: 999, padding: 3, flexShrink: 0 }}>
+        <button onClick={() => onDec(i.id)} aria-label={`Remove one ${i.name}`} style={{ background: 'transparent', border: 'none', color: 'var(--fg-2)', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 999 }}><Icon name="minus" size={12}/></button>
+        <span style={{ font: '600 12px var(--font-mono)', minWidth: 18, textAlign: 'center' }}>{i.qty}</span>
+        <button onClick={() => onInc(i.id)} aria-label={`Add one ${i.name}`} style={{ background: 'transparent', border: 'none', color: 'var(--accent)', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 999 }}><Icon name="plus" size={12}/></button>
+      </div>
+    </li>
+  );
+}
+
+function CartDrawer({ open, items, onClose, onInc, onDec, total }) {
+  const panelRef = useRef(null);
+  const closeRef = useRef(null);
+  const returnFocusRef = useRef(null);
+  const mountedRef = useRef(false);
+  const [checkoutNote, setCheckoutNote] = useState(false);
+  const reduced = shellUseMedia(SHELL_REDUCED_MOTION);
+  // Latest onClose without re-binding the key listener on every App render.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // Rows present on first render don't animate; rows added later do.
+  useEffect(() => { mountedRef.current = true; }, []);
+
+  // `inert` isn't a known prop in React 18 — set it on the node directly.
+  React.useLayoutEffect(() => {
+    if (panelRef.current) panelRef.current.inert = !open;
+  }, [open]);
+
+  // Focus: into the close button on open, back to the opener on close.
+  useEffect(() => {
+    if (open) {
+      returnFocusRef.current = document.activeElement;
+      const focusClose = () => { if (closeRef.current) closeRef.current.focus({ preventScroll: true }); };
+      focusClose();
+      // Descendants with their own (global) transitions can inherit `visibility: hidden`
+      // for one more frame; retry once so focus still lands in the dialog.
+      if (document.activeElement === closeRef.current) return;
+      const raf = requestAnimationFrame(() => requestAnimationFrame(focusClose));
+      return () => cancelAnimationFrame(raf);
+    }
+    setCheckoutNote(false);
+    const el = returnFocusRef.current;
+    returnFocusRef.current = null;
+    if (el && el !== document.body && document.contains(el) && typeof el.focus === 'function') {
+      el.focus({ preventScroll: true });
+    }
+  }, [open]);
+
+  // Escape closes; Tab stays inside the dialog while it is open.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = e => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !panelRef.current) return;
+      const nodes = Array.from(panelRef.current.querySelectorAll(SHELL_FOCUSABLE));
+      if (!nodes.length) return;
+      const first = nodes[0], last = nodes[nodes.length - 1];
+      const inside = panelRef.current.contains(document.activeElement);
+      if (e.shiftKey && (document.activeElement === first || !inside)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (document.activeElement === last || !inside)) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  // Modal: keep the page behind it from scrolling while open.
+  useEffect(() => {
+    if (!open) return;
+    const body = document.body;
+    const gutter = window.innerWidth - document.documentElement.clientWidth;
+    const prev = { overflow: body.style.overflow, paddingRight: body.style.paddingRight };
+    body.style.overflow = 'hidden';
+    if (gutter > 0) body.style.paddingRight = `${gutter}px`;
+    return () => {
+      body.style.overflow = prev.overflow;
+      body.style.paddingRight = prev.paddingRight;
+    };
+  }, [open]);
+
+  const inMs = reduced ? 200 : 400;
+  const outMs = reduced ? 200 : 260;
+  const dur = open ? inMs : outMs;
+  const ease = reduced ? SHELL_EASE_OUT : SHELL_EASE_DRAWER;
+  const visibilityT = `visibility 0s linear ${open ? 0 : dur}ms`;
+  const progress = Math.min(1, total / 40);
+
+  const browse = () => {
+    // The opener may belong to the page we're leaving; only restore focus to persistent chrome.
+    const el = returnFocusRef.current;
+    if (el && !(el.closest && el.closest('header'))) returnFocusRef.current = null;
+    onClose();
+    navTo('/');
+  };
+
+  return (
+    // Fixed, clipped layer: the off-canvas panel never widens the page's scroll area.
+    // `visibility` lives here (hidden only after the exit transition) and is inherited.
+    <div style={{
+      position: 'fixed', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 100,
+      visibility: open ? 'visible' : 'hidden',
+      transition: visibilityT
+    }}>
+      <div onClick={onClose} aria-hidden="true" style={{
+        position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
         opacity: open ? 1 : 0, pointerEvents: open ? 'auto' : 'none',
-        transition: 'opacity 220ms', zIndex: 100
+        transition: `opacity ${dur}ms ${ease}`
       }}/>
-      <aside style={{
-        position: 'fixed', top: 0, right: 0, bottom: 0, width: 460,
-        maxWidth: '100vw',
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="shell-cart-title" style={{
+        position: 'absolute', top: 0, right: 0, bottom: 0, width: 460,
+        maxWidth: '100%', boxSizing: 'border-box', pointerEvents: open ? 'auto' : 'none',
         background: 'var(--ink-800)', borderLeft: '1px solid var(--border-2)',
-        zIndex: 101, padding: 28, display: 'flex', flexDirection: 'column',
-        transform: open ? 'translateX(0)' : 'translateX(100%)',
-        transition: 'transform 320ms cubic-bezier(0.22, 1.2, 0.36, 1)',
+        padding: 'clamp(20px, 5vw, 28px)', display: 'flex', flexDirection: 'column',
+        transform: reduced || open ? 'translateX(0)' : 'translateX(100%)',
+        opacity: reduced && !open ? 0 : 1,
+        transition: reduced ? `opacity ${dur}ms ${ease}` : `transform ${dur}ms ${ease}`,
         boxShadow: '-30px 0 80px rgba(0,0,0,0.6)'
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <div>
             <span className="mono-sm" style={{ color: 'var(--accent)' }}>MY FRIDGE</span>
-            <div className="h2" style={{ marginTop: 4, fontSize: 28 }}>Inventory</div>
+            <h2 id="shell-cart-title" className="h2" style={{ marginTop: 4, fontSize: 28 }}>Inventory</h2>
           </div>
-          <button onClick={onClose} className="iconbtn"><Icon name="x"/></button>
+          <button ref={closeRef} onClick={onClose} className="iconbtn" aria-label="Close cart"
+                  style={{ transition: `color 200ms ${SHELL_EASE_OUT}, border-color 200ms ${SHELL_EASE_OUT}` }}>
+            <Icon name="x"/>
+          </button>
         </div>
 
         {/* HUD bar */}
@@ -277,109 +615,129 @@ function CartDrawer({ open, items, onClose, onInc, onDec, total }) {
           padding: '8px 12px',
           background: 'var(--ink-900)',
           border: '1px solid var(--border-1)',
-          borderRadius: 8,
+          borderRadius: 12,
           margin: '20px 0 16px',
-          fontFamily: 'JetBrains Mono, monospace',
+          fontFamily: 'var(--font-mono)',
           fontSize: 11,
           letterSpacing: '0.08em',
           color: 'var(--fg-3)'
         }}>
-          <span className="dot" style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)' }}/>
-          <span>STATUS: STOCKED · {items.reduce((s, i) => s + i.qty, 0)} CANS QUEUED</span>
+          <span aria-hidden="true" className="dot" style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)', flexShrink: 0 }}/>
+          <span>STATUS: {items.length ? 'STOCKED' : 'EMPTY'} · {items.reduce((s, i) => s + i.qty, 0)} CANS QUEUED</span>
         </div>
 
-        <div className="thin-scroll" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {items.length === 0 && (
-            <div style={{ color: 'var(--fg-3)', font: '400 14px Inter, sans-serif', padding: '40px 24px', textAlign: 'center', border: '1px dashed var(--border-1)', borderRadius: 12 }}>
-              Nothing in your fridge yet.<br/>Let's fix that.
-            </div>
-          )}
-          {items.map(i => (
-            <div key={i.id} style={{
-              display: 'flex', gap: 12, padding: 12,
-              border: '1px solid var(--border-1)', borderRadius: 12,
-              background: 'var(--surface-card)', alignItems: 'center'
+        <div className="thin-scroll" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          {items.length === 0 ? (
+            <div style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
+              padding: '40px 24px', textAlign: 'center',
+              border: '1px dashed var(--border-2)', borderRadius: 18
             }}>
-              {/* mini glass-bottle thumbnail */}
-              <div style={{ width: 48, height: 70, flexShrink: 0, position: 'relative' }}>
-                <svg viewBox="0 0 60 86" width="48" height="70" style={{ display: 'block', overflow: 'visible' }}>
-                  <defs>
-                    <linearGradient id={`mini-j-${i.id}`} x1="0" x2="0" y1="0" y2="1">
-                      <stop offset="0" stopColor={i.color} stopOpacity="0.7"/>
-                      <stop offset="0.5" stopColor={i.color}/>
-                      <stop offset="1" stopColor={i.accent}/>
-                    </linearGradient>
-                    <linearGradient id={`mini-c-${i.id}`} x1="0" x2="1">
-                      <stop offset="0" stopColor="#6a6a6a"/>
-                      <stop offset="0.4" stopColor="#fafafa"/>
-                      <stop offset="0.7" stopColor="#bdbdbd"/>
-                      <stop offset="1" stopColor="#4e4e4e"/>
-                    </linearGradient>
-                  </defs>
-                  {/* shadow */}
-                  <ellipse cx="30" cy="82" rx="22" ry="2" fill="rgba(0,0,0,0.5)"/>
-                  {/* bottle body — square juice silhouette */}
-                  <path d="M 8 80 L 8 24 Q 8 21 11 19 L 16 14 Q 18 12 18 10 L 18 8 Q 18 6 20 6 L 40 6 Q 42 6 42 8 L 42 10 Q 42 12 44 14 L 49 19 Q 52 21 52 24 L 52 80 Q 52 82 50 82 L 10 82 Q 8 82 8 80 Z"
-                        fill={`url(#mini-j-${i.id})`} stroke="rgba(0,0,0,0.25)" strokeWidth="0.5"/>
-                  {/* glass shine */}
-                  <rect x="10" y="22" width="3" height="56" fill="rgba(255,255,255,0.45)" rx="1"/>
-                  <rect x="46" y="22" width="2" height="56" fill="rgba(255,255,255,0.25)" rx="1"/>
-                  {/* meniscus */}
-                  <ellipse cx="30" cy="22" rx="20" ry="1.4" fill="rgba(255,255,255,0.5)"/>
-                  {/* cap */}
-                  <rect x="18" y="2" width="24" height="9" rx="0.6" fill={`url(#mini-c-${i.id})`}/>
-                  <rect x="18" y="2" width="24" height="1.6" fill="rgba(255,255,255,0.6)"/>
-                  {/* label blob */}
-                  <ellipse cx="30" cy="56" rx="17" ry="14" fill="#ffffff"/>
-                  <text x="30" y="60" textAnchor="middle"
-                        fontFamily="Bricolage Grotesque, sans-serif"
-                        fontWeight="800" fontSize="11"
-                        letterSpacing="-0.5"
-                        fill={i.accent}>SL</text>
-                </svg>
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ font: '600 14px Space Grotesk, sans-serif' }}>{i.name}</div>
-                <div style={{ font: '400 11px JetBrains Mono, monospace', color: 'var(--fg-3)', marginTop: 2 }}>${i.price.toFixed(2)}/CAN · {i.sub}</div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, border: '1px solid var(--border-2)', borderRadius: 999, padding: 3 }}>
-                <button onClick={() => onDec(i.id)} style={{ background: 'transparent', border: 'none', color: 'var(--fg-2)', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 999 }}><Icon name="minus" size={12}/></button>
-                <span style={{ font: '600 12px JetBrains Mono', minWidth: 18, textAlign: 'center' }}>{i.qty}</span>
-                <button onClick={() => onInc(i.id)} style={{ background: 'transparent', border: 'none', color: 'var(--accent)', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 999 }}><Icon name="plus" size={12}/></button>
-              </div>
+              <span aria-hidden="true" style={{
+                width: 48, height: 48, borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'var(--accent-soft)', color: 'var(--accent)'
+              }}>
+                <Icon name="cart" size={20}/>
+              </span>
+              <span className="mono-sm" style={{ color: 'var(--accent)' }}>SLOT EMPTY</span>
+              <div style={{ font: '600 18px/1.3 var(--font-ui)', color: 'var(--fg-1)' }}>Nothing in your fridge yet.</div>
+              <div style={{ font: '400 14px/1.5 var(--font-body)', color: 'var(--fg-3)' }}>Let's fix that.</div>
+              <button onClick={browse} className="btn btn-primary" style={{ marginTop: 8 }}>
+                Browse flavors <Icon name="arrowR" size={16}/>
+              </button>
             </div>
-          ))}
+          ) : (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {items.map(i => (
+                <ShellCartRow key={i.id} item={i} animateIn={mountedRef.current} onInc={onInc} onDec={onDec}/>
+              ))}
+            </ul>
+          )}
         </div>
 
         <div style={{ borderTop: '1px solid var(--border-1)', paddingTop: 20, marginTop: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-            <span style={{ font: '500 14px Inter, sans-serif', color: 'var(--fg-2)' }}>Subtotal</span>
-            <span style={{ font: '700 22px JetBrains Mono', color: 'var(--accent)' }}>${total.toFixed(2)}</span>
+            <span style={{ font: '500 14px var(--font-body)', color: 'var(--fg-2)' }}>Subtotal</span>
+            <span style={{ font: '700 22px var(--font-mono)', color: 'var(--accent)' }}>${total.toFixed(2)}</span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, font: '400 12px JetBrains Mono', color: 'var(--fg-3)', letterSpacing: '0.04em' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, font: '400 12px var(--font-mono)', color: 'var(--fg-3)', letterSpacing: '0.04em' }}>
             <span>SHIPPING</span>
             <span>{total >= 40 ? 'FREE' : `$${(40 - total).toFixed(2)} TO FREE`}</span>
           </div>
           {total < 40 && (
-            <div style={{ background: 'var(--ink-900)', borderRadius: 999, height: 4, overflow: 'hidden', marginBottom: 16 }}>
-              <div style={{ width: `${Math.min(100, (total / 40) * 100)}%`, height: '100%', background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)', transition: 'width 220ms' }}/>
+            <div aria-hidden="true" style={{ background: 'var(--ink-900)', borderRadius: 999, height: 4, overflow: 'hidden', marginBottom: 16 }}>
+              <div style={{
+                width: '100%', height: '100%', background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)',
+                transform: `scaleX(${progress})`, transformOrigin: 'left',
+                transition: `transform 220ms ${SHELL_EASE_OUT}`
+              }}/>
             </div>
           )}
-          <button className="btn btn-primary btn-lg" style={{ width: '100%' }} disabled={items.length === 0}>
+          <button className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center' }}
+                  disabled={items.length === 0}
+                  onClick={() => setCheckoutNote(true)}>
             Checkout · ${total.toFixed(2)}
           </button>
-          <div style={{ font: '400 11px JetBrains Mono, monospace', color: 'var(--fg-4)', textAlign: 'center', marginTop: 12, letterSpacing: '0.06em' }}>
+          <div role="status" aria-live="polite" style={{
+            font: '500 12px var(--font-mono)', color: 'var(--fg-2)', textAlign: 'center', letterSpacing: '0.04em',
+            marginTop: checkoutNote ? 10 : 0
+          }}>
+            {checkoutNote ? 'Demo store — checkout is disabled' : ''}
+          </div>
+          <div style={{ font: '400 11px var(--font-mono)', color: 'var(--fg-4)', textAlign: 'center', marginTop: 12, letterSpacing: '0.06em' }}>
             SECURE · 30-DAY GUARANTEE · CANCEL ANYTIME
           </div>
         </div>
-      </aside>
-    </>
+      </div>
+    </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────
 // FOOTER
 // ─────────────────────────────────────────────────────────────
+const SHELL_FOOTER_HEADING = { font: '700 11px var(--font-ui)', letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 16 };
+const SHELL_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function ShellNewsletter() {
+  const [email, setEmail] = useState('');
+  const [status, setStatus] = useState('idle'); // idle | error | done
+
+  const onSubmit = e => {
+    e.preventDefault();
+    if (!SHELL_EMAIL_RE.test(email.trim())) { setStatus('error'); return; }
+    setStatus('done');
+    setEmail('');
+  };
+
+  return (
+    <div>
+      <div style={SHELL_FOOTER_HEADING}>Stay in the loop</div>
+      <p style={{ font: '400 13px/1.5 var(--font-body)', color: 'var(--fg-3)', marginBottom: 12 }}>
+        Drops, restocks, and the occasional 3am thought.
+      </p>
+      <form onSubmit={onSubmit} noValidate style={{ display: 'flex', gap: 6 }}>
+        <label htmlFor="shell-footer-email" style={shellSrOnly}>Email address</label>
+        <input id="shell-footer-email" className="input" type="email" name="email" autoComplete="email"
+               placeholder="you@gg.com" value={email}
+               aria-invalid={status === 'error' ? true : undefined}
+               aria-describedby="shell-footer-email-status"
+               onChange={e => { setEmail(e.target.value); if (status !== 'idle') setStatus('idle'); }}
+               style={{ flex: 1, minWidth: 0, padding: '10px 12px', fontSize: 13 }}/>
+        <button type="submit" className="btn btn-primary" style={{ padding: '10px 14px', fontSize: 13, flexShrink: 0 }}>Join</button>
+      </form>
+      <div id="shell-footer-email-status" role="status" aria-live="polite" style={{
+        display: 'flex', alignItems: 'center', gap: 6, minHeight: 18, marginTop: 8,
+        font: '500 12px var(--font-body)',
+        color: status === 'error' ? 'var(--danger)' : 'var(--accent)'
+      }}>
+        {status === 'done' && <><Icon name="check" size={14}/><span>You're in.</span></>}
+        {status === 'error' && <span>Enter a valid email address.</span>}
+      </div>
+    </div>
+  );
+}
+
 function Footer() {
   return (
     <footer style={{ borderTop: '1px solid var(--border-1)', background: 'var(--ink-900)', position: 'relative', overflow: 'hidden' }}>
@@ -391,14 +749,14 @@ function Footer() {
 
       {/* Big wordmark band */}
       <div style={{
-        padding: '80px 0 40px',
+        padding: 'clamp(48px, 8vw, 80px) 0 40px',
         borderBottom: '1px solid var(--border-1)',
         textAlign: 'center',
         position: 'relative'
       }}>
         <div className="container">
-          <div style={{
-            font: '800 clamp(96px, 16vw, 220px)/0.9 Bricolage Grotesque, sans-serif',
+          <div aria-hidden="true" style={{
+            font: '800 clamp(56px, 15vw, 220px)/0.9 var(--font-display)',
             letterSpacing: '-0.05em',
             background: 'linear-gradient(180deg, var(--accent) 0%, var(--accent-deep) 100%)',
             WebkitBackgroundClip: 'text',
@@ -408,22 +766,22 @@ function Footer() {
           }}>
             SLIME LIME
           </div>
-          <div className="mono-sm" style={{ color: 'var(--fg-3)', marginTop: 16, letterSpacing: '0.16em' }}>
+          <div aria-hidden="true" className="mono-sm" style={{ color: 'var(--fg-3)', marginTop: 16, letterSpacing: '0.16em' }}>
             // STAY HYDRATED · LOCK IN ·  STAY HYDRATED · LOCK IN · STAY HYDRATED
           </div>
         </div>
       </div>
 
-      <div className="container" style={{ padding: '48px 32px 24px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1.5fr', gap: 40, marginBottom: 48 }}>
+      <div className="container" style={{ paddingTop: 48, paddingBottom: 24, position: 'relative' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))', gap: 40, marginBottom: 48 }}>
           <div>
             <Wordmark size={20}/>
-            <p style={{ font: '400 14px/1.6 Inter, sans-serif', color: 'var(--fg-3)', marginTop: 16, maxWidth: 280 }}>
+            <p style={{ font: '400 14px/1.6 var(--font-body)', color: 'var(--fg-3)', marginTop: 16, maxWidth: 280 }}>
               Healthy gaming drinks. Built for focus, hydration, and the long session.
             </p>
             <div style={{ display: 'flex', gap: 8, marginTop: 24 }}>
-              {['twitch', 'discord'].map(s => (
-                <button key={s} className="iconbtn" style={{ width: 36, height: 36 }}>
+              {[['twitch', 'Twitch'], ['discord', 'Discord']].map(([s, label]) => (
+                <button key={s} className="iconbtn" aria-label={label} style={{ width: 36, height: 36 }}>
                   <Icon name={s} size={16}/>
                 </button>
               ))}
@@ -434,40 +792,31 @@ function Footer() {
             ['Learn',   [['Our story', '/story'], ['The science', '/story#science'], ['FAQ', '/faq'], ['Reviews', '/']]],
             ['Company', [['About', '/story'], ['Careers', '#'], ['Press', '#'], ['Contact', '#']]],
           ].map(([h, links]) => (
-            <div key={h}>
-              <div style={{ font: '700 11px Space Grotesk, sans-serif', letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 16 }}>{h}</div>
+            <nav key={h} aria-label={`Footer ${h}`}>
+              <div style={SHELL_FOOTER_HEADING}>{h}</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {links.map(([label, path]) => (
-                  <a key={label} href={`#${path}`}
-                     onClick={e => { if (path.startsWith('/')) { e.preventDefault(); navTo(path); }}}
-                     style={{ font: '400 14px Inter, sans-serif', color: 'var(--fg-2)', textDecoration: 'none' }}>
+                  <a key={label} href={path.startsWith('/') ? `#${path}` : '#'}
+                     onClick={e => { e.preventDefault(); if (path.startsWith('/')) navTo(path); }}
+                     style={{ font: '400 14px var(--font-body)', color: 'var(--fg-2)', textDecoration: 'none' }}>
                     {label}
                   </a>
                 ))}
               </div>
-            </div>
+            </nav>
           ))}
-          <div>
-            <div style={{ font: '700 11px Space Grotesk, sans-serif', letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 16 }}>Stay in the loop</div>
-            <p style={{ font: '400 13px/1.5 Inter, sans-serif', color: 'var(--fg-3)', marginBottom: 12 }}>
-              Drops, restocks, and the occasional 3am thought.
-            </p>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <input className="input" placeholder="you@gg.com" style={{ flex: 1, padding: '10px 12px', fontSize: 13 }}/>
-              <button className="btn btn-primary" style={{ padding: '10px 14px', fontSize: 13 }}>Join</button>
-            </div>
-          </div>
+          <ShellNewsletter/>
         </div>
         <div style={{
           borderTop: '1px solid var(--border-1)', paddingTop: 24,
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          font: '400 11px JetBrains Mono, monospace', color: 'var(--fg-4)', letterSpacing: '0.08em'
+          display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '12px 24px',
+          font: '400 11px var(--font-mono)', color: 'var(--fg-4)', letterSpacing: '0.08em'
         }}>
           <span>© 2026 SLIME LIME · ALL RIGHTS RESERVED</span>
-          <span style={{ display: 'flex', gap: 16 }}>
-            <a href="#" style={{ color: 'var(--fg-4)' }}>PRIVACY</a>
-            <a href="#" style={{ color: 'var(--fg-4)' }}>TERMS</a>
-            <a href="#" style={{ color: 'var(--fg-4)' }}>ACCESSIBILITY</a>
+          <span style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+            <a href="#" onClick={e => e.preventDefault()} style={{ color: 'var(--fg-4)' }}>PRIVACY</a>
+            <a href="#" onClick={e => e.preventDefault()} style={{ color: 'var(--fg-4)' }}>TERMS</a>
+            <a href="#" onClick={e => e.preventDefault()} style={{ color: 'var(--fg-4)' }}>ACCESSIBILITY</a>
           </span>
         </div>
       </div>
