@@ -1,10 +1,14 @@
 /* =========================================================
    Slime Lime — Colors & Type Foundations
-   Single source of truth. Import this everywhere.
+   Single source of truth. Import this everywhere — and link the Google
+   Fonts stylesheet alongside it (see the Fonts note below).
    ========================================================= */
 
-/* ---------- Fonts (Google Fonts substitutions — see README) ---------- */
-@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+/* ---------- Fonts (Google Fonts substitutions — see README) ----------
+   Loaded from <head> in "Slime Lime.html" via preconnect + <link rel="stylesheet">
+   (not @import, which serialises the font CSS behind this file). Families/weights:
+   Bricolage Grotesque opsz 12..96 · 500/700/800, Space Grotesk 400–700,
+   Inter 400–700, JetBrains Mono 400/500/700. */
 
 :root {
   /* =========================================================
@@ -125,13 +129,18 @@
   --space-24: 96px;
   --space-32: 128px;
 
-  /* Radii — a little more relaxed than typical "tech" (slime softness) */
+  /* Radii — a little more relaxed than typical "tech" (slime softness)
+     SHAPE RULE (use these three, nothing in between):
+       · controls & inputs (buttons, icon buttons, fields, tabs) → 12px  = --radius-md
+       · cards & panels                                           → 18px  = --radius-lg
+       · chips, steppers, badges, pills                           → pill  = --radius-pill
+     --radius-xs/-sm/-xl stay for back-compat and special cases (e.g. tiny ticks). */
   --radius-xs: 4px;
   --radius-sm: 8px;
-  --radius-md: 12px;   /* default for cards, fields */
-  --radius-lg: 18px;   /* hero cards */
+  --radius-md: 12px;   /* controls & inputs */
+  --radius-lg: 18px;   /* cards */
   --radius-xl: 28px;   /* big surfaces */
-  --radius-pill: 999px;
+  --radius-pill: 999px; /* chips, steppers, badges */
   --radius-can:  44% 44% 6% 6% / 8% 8% 4% 4%;  /* can-top curvature */
 
   /* =========================================================
@@ -183,9 +192,15 @@
   /* =========================================================
      MOTION
      ========================================================= */
-  --ease-slime: cubic-bezier(0.22, 1.2, 0.36, 1);   /* overshoot, slime-y */
-  --ease-out:   cubic-bezier(0.2, 0.7, 0.2, 1);
-  --ease-in:    cubic-bezier(0.6, 0.04, 0.98, 0.34);
+  /* Functional motion only: animate transform/opacity, list transition
+     properties explicitly (never `all`), and keep UI feedback under ~300ms. */
+  --ease-out:    cubic-bezier(0.23, 1, 0.32, 1);     /* default: enters, hovers, presses */
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);    /* on-screen movement, reveals */
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);     /* sheets & drawers */
+  --ease-in:     cubic-bezier(0.6, 0.04, 0.98, 0.34);
+  /* Overshoot. RESERVED for rare delight moments (e.g. completing a pack) —
+     never for routine UI like buttons, drawers or hovers. */
+  --ease-slime:  cubic-bezier(0.22, 1.2, 0.36, 1);
   --dur-1: 120ms;
   --dur-2: 220ms;
   --dur-3: 360ms;
