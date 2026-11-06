@@ -42,11 +42,12 @@ function App() {
   const route = window.useRoute();
   const cart = window.useCart();
   const [flavor, setFlavor] = useStateApp(window.FLAVORS[0]);
-  window.useFlavorTheme(flavor);
+  // The flagship PDP is always Lemon-Lime, whatever flavor is picked on Home.
+  window.useFlavorTheme(route.startsWith('/flagship') ? window.FLAVORS[0] : flavor);
 
   let page;
   if (route.startsWith('/flagship')) page = <window.FlagshipPage flavor={flavor} onAdd={cart.add}/>;
-  else if (route.startsWith('/subscribe')) page = <window.SubscribePage onAdd={cart.add}/>;
+  else if (route.startsWith('/subscribe')) page = <window.SubscribePage onAdd={cart.add} onSubscribe={cart.replaceSubscription}/>;
   else if (route.startsWith('/story')) page = <window.StoryPage/>;
   else if (route.startsWith('/faq')) page = <window.FAQPage/>;
   else page = <window.HomePage flavor={flavor} onPickFlavor={setFlavor} onAdd={cart.add}/>;
