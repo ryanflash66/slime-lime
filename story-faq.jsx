@@ -1,6 +1,30 @@
 /* global React */
 // STORY + FAQ pages
-const { useState: useStateO } = React;
+const { useState: useStateO, useEffect: useEffectO, useLayoutEffect: useLayoutEffectO, useRef: useRefO } = React;
+
+const storyFaqEaseOut = 'cubic-bezier(0.23,1,0.32,1)';
+const storyFaqAutoGrid = (gap, min = 240) => ({ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${min}px), 1fr))`, gap });
+
+const storyFaqTimeline = [
+  { y: '2023', t: 'The rant', b: 'A Discord thread about why every energy drink crashes you at hour four turns into a 200-message manifesto.' },
+  { y: '2024', t: 'Formula 01', b: 'Six months in a food-science lab. We test 31 caffeine/L-theanine combos. We pick the smoothest one.' },
+  { y: '2025', t: 'First batch', b: 'Lemon-Lime ships to 4,200 backers. Sells through in 11 days. We restock and add Cherry, Blue Rasp.' },
+  { y: '2026', t: 'You', b: 'Mango and Grape drop. The lineup is six. We ship to 41 countries. The fridge keeps growing.' },
+];
+
+function storyFaqUseReducedMotion() {
+  const query = '(prefers-reduced-motion: reduce)';
+  const [reduced, setReduced] = useStateO(() => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia(query).matches);
+  useEffectO(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia(query);
+    const onChange = () => setReduced(mq.matches);
+    onChange();
+    if (mq.addEventListener) mq.addEventListener('change', onChange); else mq.addListener(onChange);
+    return () => { if (mq.removeEventListener) mq.removeEventListener('change', onChange); else mq.removeListener(onChange); };
+  }, []);
+  return reduced;
+}
 
 function StoryPage() {
   return (
@@ -9,7 +33,7 @@ function StoryPage() {
         <div className="hero-bg" style={{ opacity: 0.4 }}/>
         <div className="container" style={{ position: 'relative' }}>
           <div className="eyebrow" style={{ marginBottom: 24 }}>// OUR STORY · FOUNDED 2024</div>
-          <h1 className="display-xl" style={{ maxWidth: 1000, marginBottom: 32 }}>
+          <h1 className="display-xl" style={{ maxWidth: 1000, marginBottom: 32, overflowWrap: 'break-word' }}>
             We were tired<br/>of crashing<br/><span style={{ color: 'var(--accent)' }}>at hour four.</span>
           </h1>
           <p className="body-lg" style={{ maxWidth: 640 }}>
@@ -22,18 +46,18 @@ function StoryPage() {
         <div className="container">
           <div className="eyebrow" style={{ marginBottom: 16 }}>// THE TIMELINE</div>
           <h2 className="display-lg" style={{ marginBottom: 56 }}>How we got here.</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 24 }}>
-            {[
-              { y: '2023', t: 'The rant', b: 'A Discord thread about why every energy drink crashes you at hour four turns into a 200-message manifesto.' },
-              { y: '2024', t: 'Formula 01', b: 'Six months in a food-science lab. We test 31 caffeine/L-theanine combos. We pick the smoothest one.' },
-              { y: '2025', t: 'First batch', b: 'Lemon-Lime ships to 4,200 backers. Sells through in 11 days. We restock and add Cherry, Blue Rasp.' },
-              { y: '2026', t: 'You', b: 'Mango and Grape drop. The lineup is six. We ship to 41 countries. The fridge keeps growing.' },
-            ].map((s, i) => (
-              <div key={s.y} className="card" style={{ position: 'relative' }}>
-                <div className="mono-sm" style={{ color: 'var(--accent)', marginBottom: 12 }}>{s.y}</div>
-                <div className="h3" style={{ fontSize: 22, marginBottom: 12 }}>{s.t}</div>
-                <p className="body" style={{ fontSize: 14 }}>{s.b}</p>
-                <div style={{ position: 'absolute', top: 12, right: 12, font: '700 32px JetBrains Mono', color: 'var(--border-2)' }}>0{i+1}</div>
+          {/* Two pairs in an outer auto-fit grid -> 4 / 2x2 / 1 columns, never a 3+1 orphan. */}
+          <div style={storyFaqAutoGrid(24, 504)}>
+            {[storyFaqTimeline.slice(0, 2), storyFaqTimeline.slice(2)].map((pair, g) => (
+              <div key={g} style={storyFaqAutoGrid(24)}>
+                {pair.map((s, j) => (
+                  <div key={s.y} className="card" style={{ position: 'relative' }}>
+                    <div className="mono-sm" style={{ color: 'var(--accent)', marginBottom: 12 }}>{s.y}</div>
+                    <div className="h3" style={{ fontSize: 22, marginBottom: 12 }}>{s.t}</div>
+                    <p className="body" style={{ fontSize: 14 }}>{s.b}</p>
+                    <div aria-hidden="true" style={{ position: 'absolute', top: 12, right: 12, font: '700 32px var(--font-mono)', color: 'var(--border-2)' }}>0{g * 2 + j + 1}</div>
+                  </div>
+                ))}
               </div>
             ))}
           </div>
@@ -44,7 +68,7 @@ function StoryPage() {
         <div className="container">
           <div className="eyebrow" style={{ marginBottom: 16 }}>// THE SCIENCE</div>
           <h2 className="display-lg" style={{ marginBottom: 40, maxWidth: 800 }}>What's actually in the can.</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
+          <div style={storyFaqAutoGrid(20, 300)}>
             {[
               { h: 'Clean caffeine', n: '75mg', b: 'Sourced from green coffee. Slow-release. No taurine, no guarana, no synthetic stim stack.' },
               { h: 'L-theanine', n: '100mg', b: 'Pairs with caffeine to flatten the curve. Calm focus, no jitter, no cliff.' },
@@ -55,7 +79,7 @@ function StoryPage() {
             ].map(s => (
               <div key={s.h} className="card">
                 <div className="h3" style={{ fontSize: 22, marginBottom: 8 }}>{s.h}</div>
-                <div style={{ font: '700 32px JetBrains Mono', color: 'var(--accent)', marginBottom: 12 }}>{s.n}</div>
+                <div style={{ font: '700 32px var(--font-mono)', color: 'var(--accent)', marginBottom: 12, overflowWrap: 'anywhere' }}>{s.n}</div>
                 <p className="body" style={{ fontSize: 14 }}>{s.b}</p>
               </div>
             ))}
@@ -81,8 +105,56 @@ function StoryPage() {
   );
 }
 
+// One accordion row. The answer collapses with the grid-rows technique (0fr -> 1fr)
+// so long answers are never clipped; closed answers are inert (no focus, not in the a11y tree).
+function StoryFaqItem({ q, a, idx, isOpen, reduced, onToggle }) {
+  const regionRef = useRefO(null);
+  const qId = `storyfaq-q-${idx}`;
+  const aId = `storyfaq-a-${idx}`;
+  // Layout effect so closed panels are inert before first paint.
+  useLayoutEffectO(() => {
+    if (regionRef.current) regionRef.current.inert = !isOpen;
+  }, [isOpen]);
+  const dur = 260;
+  return (
+    <div style={{ borderBottom: '1px solid var(--border-1)' }}>
+      <button id={qId} type="button" aria-expanded={isOpen} aria-controls={aId} onClick={onToggle} style={{
+        width: '100%', padding: '20px 0',
+        background: 'transparent', border: 0, cursor: 'pointer',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16,
+        color: 'var(--fg-1)', textAlign: 'left',
+        font: '600 17px/1.35 var(--font-ui)',
+      }}>
+        <span>{q}</span>
+        <span aria-hidden="true" style={{
+          color: 'var(--accent)', flexShrink: 0, display: 'inline-flex',
+          transform: isOpen ? 'rotate(180deg)' : 'none',
+          transition: reduced ? 'none' : `transform 220ms ${storyFaqEaseOut}`,
+        }}>
+          <Icon name="chevD" size={20}/>
+        </span>
+      </button>
+      <div id={aId} ref={regionRef} role="region" aria-labelledby={qId} style={{
+        display: 'grid',
+        gridTemplateRows: isOpen ? '1fr' : '0fr',
+        transition: reduced ? 'none' : `grid-template-rows ${dur}ms ${storyFaqEaseOut}`,
+      }}>
+        <div style={{
+          minHeight: 0, overflow: 'hidden',
+          // Hide after the collapse finishes (instantly when opening or under reduced motion).
+          visibility: isOpen ? 'visible' : 'hidden',
+          transition: isOpen || reduced ? 'none' : `visibility 0s linear ${dur}ms`,
+        }}>
+          <p className="body" style={{ paddingBottom: 20, color: 'var(--fg-2)' }}>{a}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FAQPage() {
   const [open, setOpen] = useStateO(0);
+  const reduced = storyFaqUseReducedMotion();
   const groups = [
     { name: 'Product', qs: [
       ['How is Slime Lime different from a regular energy drink?', "Most energy drinks are tuned for shift workers — high sugar, max stim, fast crash. We're tuned for 6-hour focus sessions. 75mg of clean caffeine, 100mg L-theanine, real fruit, six electrolytes."],
@@ -122,38 +194,21 @@ function FAQPage() {
                 const myIdx = idx++;
                 const isOpen = open === myIdx;
                 return (
-                  <div key={q} style={{ borderBottom: '1px solid var(--border-1)' }}>
-                    <button onClick={() => setOpen(isOpen ? -1 : myIdx)} style={{
-                      width: '100%', padding: '20px 0',
-                      background: 'transparent', border: 0, cursor: 'pointer',
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                      color: 'var(--fg-1)', textAlign: 'left',
-                      font: '600 17px Space Grotesk',
-                    }}>
-                      <span>{q}</span>
-                      <span style={{ color: 'var(--accent)', transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 220ms' }}>
-                        <Icon name="chevD" size={20}/>
-                      </span>
-                    </button>
-                    <div style={{
-                      maxHeight: isOpen ? 200 : 0,
-                      overflow: 'hidden',
-                      transition: 'max-height 320ms var(--ease-slime)',
-                    }}>
-                      <p className="body" style={{ paddingBottom: 20, color: 'var(--fg-2)' }}>{a}</p>
-                    </div>
-                  </div>
+                  <StoryFaqItem key={q} q={q} a={a} idx={myIdx} isOpen={isOpen} reduced={reduced}
+                    onToggle={() => setOpen(isOpen ? -1 : myIdx)}/>
                 );
               })}
             </div>
           ))}
 
-          <div className="card" style={{ marginTop: 56, textAlign: 'center', padding: 40 }}>
+          <div className="card" style={{ marginTop: 56, textAlign: 'center', padding: 'clamp(24px, 6vw, 40px)' }}>
             <div className="h3" style={{ marginBottom: 12 }}>Still got questions?</div>
             <p className="body" style={{ marginBottom: 24 }}>Drop into Discord or email us. We're online late.</p>
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-              <button className="btn btn-primary"><Icon name="discord" size={16}/> Join Discord</button>
-              <button className="btn btn-secondary">support@slimelime.gg</button>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+              <a className="btn btn-primary" href="https://discord.com" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
+                <Icon name="discord" size={16}/> Join Discord
+              </a>
+              <a className="btn btn-secondary" href="mailto:support@slimelime.gg" style={{ textDecoration: 'none' }}>support@slimelime.gg</a>
             </div>
           </div>
         </div>
