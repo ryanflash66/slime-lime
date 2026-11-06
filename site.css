@@ -21,18 +21,27 @@ a { color: inherit; }
   --accent-glow: rgba(202, 224, 15, 0.55);
 }
 
-/* ───────── Buttons ───────── */
+/* ───────── Buttons ─────────
+   Controls are 12px (shape rule). Transitions name their properties — never
+   `all` — and hover styles only apply on devices that can actually hover, so
+   touch taps don't leave buttons stuck in a hover state. */
 .btn {
   font: 600 15px/1 var(--font-ui);
   padding: 14px 20px;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   border: 1px solid transparent;
   cursor: pointer;
   display: inline-flex;
   gap: 10px;
   align-items: center;
   justify-content: center;
-  transition: all 220ms var(--ease-slime);
+  transition:
+    transform 140ms var(--ease-out),
+    box-shadow 200ms var(--ease-out),
+    background-color 200ms var(--ease-out),
+    border-color 200ms var(--ease-out),
+    color 200ms var(--ease-out),
+    filter 200ms var(--ease-out);
   letter-spacing: 0.01em;
 }
 .btn-primary {
@@ -41,29 +50,18 @@ a { color: inherit; }
   box-shadow: var(--gloss-pill);
   position: relative;
 }
-.btn-primary:hover {
-  filter: brightness(1.08);
-  box-shadow: 0 0 0 1px var(--accent), 0 0 32px var(--accent-glow), var(--gloss-pill);
-  transform: translateY(-1px);
-}
-.btn-primary:active { transform: translateY(1px) scale(0.98); }
 .btn-secondary {
   background: transparent;
   color: var(--fg-1);
   border-color: var(--border-2);
 }
-.btn-secondary:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-card);
-}
-.btn-lg { font-size: 16px; padding: 16px 24px; border-radius: 14px; }
-.btn-xl { font-size: 18px; padding: 20px 28px; border-radius: 16px; }
+.btn-lg { font-size: 16px; padding: 16px 24px; border-radius: var(--radius-md); }
+.btn-xl { font-size: 18px; padding: 20px 28px; border-radius: var(--radius-md); }
 .btn-ghost { background: transparent; border: 1px solid var(--border-1); color: var(--fg-2); }
-.btn-ghost:hover { color: var(--fg-1); border-color: var(--border-2); background: var(--surface-card); }
 
 .iconbtn {
   width: 40px; height: 40px;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border-2);
   background: var(--surface-card);
   display: flex;
@@ -71,9 +69,52 @@ a { color: inherit; }
   justify-content: center;
   color: var(--fg-2);
   cursor: pointer;
-  transition: all 200ms var(--ease-out);
+  transition:
+    transform 140ms var(--ease-out),
+    background-color 200ms var(--ease-out),
+    border-color 200ms var(--ease-out),
+    color 200ms var(--ease-out);
 }
-.iconbtn:hover { color: var(--fg-1); border-color: var(--border-strong); }
+
+@media (hover: hover) and (pointer: fine) {
+  .btn-primary:not(:disabled):hover {
+    filter: brightness(1.08);
+    box-shadow: 0 0 0 1px var(--accent), 0 0 32px var(--accent-glow), var(--gloss-pill);
+    transform: translateY(-1px);
+  }
+  .btn-secondary:not(:disabled):hover {
+    border-color: var(--border-strong);
+    background: var(--surface-card);
+  }
+  .btn-ghost:not(:disabled):hover { color: var(--fg-1); border-color: var(--border-2); background: var(--surface-card); }
+  .iconbtn:not(:disabled):hover { color: var(--fg-1); border-color: var(--border-strong); }
+}
+
+/* Press feedback for every button, inline-styled ones included.
+   The base transition is wrapped in :where() (zero specificity) so any class
+   or inline `transition` overrides it; those should list `transform` to keep
+   the press smooth. `.btn-primary` presses the same as every other button.
+   Exempt: full-width disclosure rows (plain buttons with aria-controls, e.g.
+   FAQ rows) and tabs — list rows get a background highlight instead of a
+   scale, and tabs are pressed too often to scale. */
+:where(button) { transition: transform 140ms var(--ease-out); }
+button:not(:disabled):not([role="tab"]):not([aria-controls]:not(.btn):not(.iconbtn)):active,
+.btn:not(:disabled):not([role="tab"]):active,
+.iconbtn:not(:disabled):not([role="tab"]):active { transform: scale(0.97); }
+/* !important beats the rows' inline `background: transparent`. Not applied
+   to tabs: the selected tab carries its own inline background. */
+button[aria-controls]:not(.btn):not(.iconbtn):not([role="tab"]):not(:disabled):active {
+  background-color: rgba(250, 252, 239, 0.04) !important;
+}
+
+/* Disabled: dimmed, inert to hover/press (hover/active rules exclude :disabled). */
+.btn:disabled,
+.iconbtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: none;
+  transform: none;
+}
 
 /* ───────── Eyebrow / labels ───────── */
 .eyebrow {
@@ -201,17 +242,6 @@ a { color: inherit; }
   100% { transform: translateX(-50%); }
 }
 
-/* ───────── Reveal-on-scroll ───────── */
-.reveal {
-  opacity: 0;
-  transform: translateY(20px);
-  transition: opacity 600ms var(--ease-out), transform 600ms var(--ease-slime);
-}
-.reveal.in {
-  opacity: 1;
-  transform: translateY(0);
-}
-
 /* ───────── Scrollbar (for cart, etc.) ───────── */
 .thin-scroll::-webkit-scrollbar { width: 6px; }
 .thin-scroll::-webkit-scrollbar-track { background: transparent; }
@@ -221,13 +251,13 @@ a { color: inherit; }
 .input {
   background: var(--bg-sunken);
   border: 1px solid var(--border-1);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   padding: 14px 16px;
   color: var(--fg-1);
   font: 500 15px var(--font-body);
   width: 100%;
   outline: none;
-  transition: border 200ms;
+  transition: border-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out);
 }
 .input:focus {
   border-color: var(--accent);
@@ -236,14 +266,14 @@ a { color: inherit; }
 
 /* ───────── Type ───────── */
 .display-xl {
-  font: 800 clamp(64px, 9vw, 128px)/0.92 var(--font-display);
+  font: 800 clamp(44px, 9vw, 128px)/0.92 var(--font-display);
   letter-spacing: -0.045em;
   margin: 0;
   font-optical-sizing: auto;
   text-wrap: balance;
 }
 .display-lg {
-  font: 800 clamp(48px, 6vw, 88px)/0.96 var(--font-display);
+  font: 800 clamp(36px, 6vw, 88px)/0.96 var(--font-display);
   letter-spacing: -0.04em;
   margin: 0;
   font-optical-sizing: auto;
@@ -367,12 +397,28 @@ html { scroll-behavior: smooth; }
 }
 @media (max-width: 600px) {
   .flavor-grid { grid-template-columns: 1fr; }
+  .container, .container-narrow, .container-prose { padding: 0 18px; }
+  .section { padding: 64px 0; }
+  .section-sm { padding: 48px 0; }
 }
 
-/* ───────── Reduced motion ───────── */
+/* ───────── Reduced motion ─────────
+   Gentler than a 0ms nuke: looping/ambient animations (marquee, pulse,
+   slime-morph, rotate…) freeze in place, and declared transitions stay but are
+   capped short so state changes still read as changes. The duration cap only
+   targets elements that declare a transition (classes below or an inline
+   style), so elements with the initial `transition-property: all` don't start
+   animating. Press scale is dropped. Components should still swap movement
+   for opacity under reduced motion (see the revamp rules). */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-play-state: paused !important; }
+  :where(button), .btn, .iconbtn, .input, [style*="transition"] {
+    transition-duration: 120ms !important;
+    transition-delay: 0s !important;
   }
+  /* Same selectors as the press rule (same specificity, later in source). */
+  button:not(:disabled):not([role="tab"]):not([aria-controls]:not(.btn):not(.iconbtn)):active,
+  .btn:not(:disabled):not([role="tab"]):active,
+  .iconbtn:not(:disabled):not([role="tab"]):active { transform: none; }
 }
