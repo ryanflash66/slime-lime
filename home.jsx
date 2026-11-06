@@ -493,9 +493,36 @@ function CalloutPin({ x, y, label, value, sub, stacked = false }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// SECTION HELPERS — media-query hook + motion curve (sections below Hero)
+// ─────────────────────────────────────────────────────────────
+const homeSecEase = 'cubic-bezier(0.23,1,0.32,1)';
+
+function homeSecUseMedia(query) {
+  const read = () => (typeof window !== 'undefined' && window.matchMedia ? window.matchMedia(query).matches : false);
+  const [matches, setMatches] = useStateH(read);
+  useEffectH(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia(query);
+    const onChange = () => setMatches(mql.matches);
+    onChange();
+    if (mql.addEventListener) mql.addEventListener('change', onChange);
+    else mql.addListener(onChange);
+    return () => {
+      if (mql.removeEventListener) mql.removeEventListener('change', onChange);
+      else mql.removeListener(onChange);
+    };
+  }, [query]);
+  return matches;
+}
+
+// ─────────────────────────────────────────────────────────────
 // LIVE TICKER — Recent orders / streaks
 // ─────────────────────────────────────────────────────────────
 function LiveTicker() {
+  const reduced = homeSecUseMedia('(prefers-reduced-motion: reduce)');
+  const canHover = homeSecUseMedia('(hover: hover) and (pointer: fine)'); // touch "hover" would stick
+  const [hovered, setHovered] = useStateH(false);
+  const [focused, setFocused] = useStateH(false);
   const events = useMemoH(() => [
     { user: 'kovacs_77', city: 'Berlin',     msg: '12-pack Lemon-Lime',     time: '2s ago' },
     { user: 'mira.gg',   city: 'Toronto',    msg: 'started a 14-day streak', time: '8s ago' },
@@ -509,32 +536,56 @@ function LiveTicker() {
     { user: 'noir.dev',  city: 'New York',   msg: 'unlocked Hydration Lvl 5', time: '1m ago' },
   ], []);
 
+  // Each set carries its own trailing gap so translateX(-50%) loops seamlessly.
+  const renderSet = (hidden) => (
+    <div aria-hidden={hidden ? 'true' : undefined} style={{ display: 'flex', gap: 32, paddingRight: 32, flexShrink: 0 }}>
+      {events.map((e, i) => (
+        <span key={i} className="mono-sm" style={{ color: 'var(--fg-3)', display: 'flex', gap: 8, whiteSpace: 'nowrap', fontSize: 12 }}>
+          <span aria-hidden="true" style={{ color: 'var(--accent)' }}>●</span>
+          <span style={{ color: 'var(--fg-1)' }}>@{e.user}</span>
+          <span>·</span>
+          <span>{e.city}</span>
+          <span>·</span>
+          <span>{e.msg}</span>
+          <span style={{ color: 'var(--fg-4)' }}>· {e.time}</span>
+        </span>
+      ))}
+    </div>
+  );
+
+  const paused = (canHover && hovered) || focused;
+
   return (
-    <section style={{
-      background: 'var(--ink-900)',
-      borderTop: '1px solid var(--border-1)',
-      borderBottom: '1px solid var(--border-1)',
-      padding: '16px 0',
-      overflow: 'hidden',
-      position: 'relative',
-    }}>
+    <section
+      aria-label="Live order feed"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false); }}
+      style={{
+        background: 'var(--ink-900)',
+        borderTop: '1px solid var(--border-1)',
+        borderBottom: '1px solid var(--border-1)',
+        padding: '16px 0',
+        overflow: 'hidden',
+        position: 'relative',
+      }}>
       <div className="container" style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
         <div className="hud-pill" style={{ flexShrink: 0 }}>
           <span className="dot"/>LIVE FEED
         </div>
-        <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-          <div style={{ display: 'flex', gap: 32, animation: 'marquee 80s linear infinite', width: 'max-content' }}>
-            {[...events, ...events].map((e, i) => (
-              <span key={i} className="mono-sm" style={{ color: 'var(--fg-3)', display: 'flex', gap: 8, whiteSpace: 'nowrap', fontSize: 12 }}>
-                <span style={{ color: 'var(--accent)' }}>●</span>
-                <span style={{ color: 'var(--fg-1)' }}>@{e.user}</span>
-                <span>·</span>
-                <span>{e.city}</span>
-                <span>·</span>
-                <span>{e.msg}</span>
-                <span style={{ color: 'var(--fg-4)' }}>· {e.time}</span>
-              </span>
-            ))}
+        {/* Focusable so keyboard users can pause it (and scroll it when it's static). */}
+        <div role="group" aria-label="Recent orders" tabIndex={0}
+          className={reduced ? 'thin-scroll' : undefined}
+          style={{ flex: 1, minWidth: 0, overflowX: reduced ? 'auto' : 'hidden', overflowY: 'hidden', position: 'relative', outlineOffset: 2 }}>
+          <div data-ticker-track="" style={{
+            display: 'flex', width: 'max-content',
+            // Reduced motion: no marquee; the single set scrolls horizontally instead.
+            animation: reduced ? 'none' : 'marquee 80s linear infinite',
+            animationPlayState: paused ? 'paused' : 'running',
+          }}>
+            {renderSet(false)}
+            {!reduced && renderSet(true)}
           </div>
         </div>
       </div>
@@ -554,10 +605,10 @@ function ProofStrip() {
   ];
   return (
     <section className="section-sm" style={{ borderBottom: '1px solid var(--border-1)' }}>
-      <div className="container" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 32 }}>
+      <div className="container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 32 }}>
         {stats.map(s => (
           <div key={s.l} style={{ borderLeft: '1px solid var(--border-2)', paddingLeft: 24 }}>
-            <div style={{ font: '700 64px/1 JetBrains Mono', color: 'var(--accent)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>{s.v}</div>
+            <div style={{ font: '700 clamp(44px, 10vw, 64px)/1 var(--font-mono)', color: 'var(--accent)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>{s.v}</div>
             <div className="mono-sm" style={{ color: 'var(--fg-2)', marginTop: 14, fontSize: 11 }}>{s.l}</div>
             <div className="body" style={{ fontSize: 14, marginTop: 8, color: 'var(--fg-3)' }}>{s.s}</div>
           </div>
@@ -571,73 +622,95 @@ function ProofStrip() {
 // LINEUP — flavor switcher + grid
 // ─────────────────────────────────────────────────────────────
 function Lineup({ flavors, current, onPick, onAdd }) {
+  // Hover effects only for real pointers; transform-based hover is dropped under reduced motion.
+  const canHover = homeSecUseMedia('(hover: hover) and (pointer: fine)');
+  const reduced = homeSecUseMedia('(prefers-reduced-motion: reduce)');
   return (
     <section className="section" id="shop" data-screen-label="02 Lineup">
       <div className="container">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 56, flexWrap: 'wrap', gap: 24 }}>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div className="eyebrow" style={{ marginBottom: 16 }}>// THE LINEUP · 6 SKUs</div>
             <h2 className="display-lg">
               Six flavors.<br/>
               <span style={{ color: 'var(--accent)' }}>One mission.</span>
             </h2>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <span className="mono-sm" style={{ color: 'var(--fg-3)' }}>// THEME</span>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {flavors.map(f => (
-                <button key={f.id} onClick={() => onPick(f)}
-                  title={f.name}
-                  style={{
-                    width: 28, height: 28, borderRadius: 999,
-                    background: f.color,
-                    border: current.id === f.id ? '2px solid var(--fg-1)' : '2px solid transparent',
-                    boxShadow: current.id === f.id ? `0 0 20px ${f.color}` : 'none',
-                    cursor: 'pointer',
-                    transition: 'all 200ms',
-                  }}/>
-              ))}
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 12, rowGap: 4 }}>
+            <span className="mono-sm" style={{ color: 'var(--fg-3)' }} aria-hidden="true">// THEME</span>
+            <div role="group" aria-label="Theme" style={{ display: 'flex' }}>
+              {flavors.map(f => {
+                const on = current.id === f.id;
+                return (
+                  <button key={f.id} type="button" onClick={() => onPick(f)}
+                    aria-label={`${f.name} theme`}
+                    aria-pressed={on}
+                    title={f.name}
+                    style={{
+                      width: 44, height: 44, padding: 0, margin: 0,
+                      display: 'grid', placeItems: 'center',
+                      background: 'transparent', border: 0,
+                      borderRadius: 999,
+                      outlineOffset: -5,
+                      cursor: 'pointer',
+                    }}>
+                    <span aria-hidden="true" style={{
+                      width: 28, height: 28, borderRadius: 999,
+                      background: f.color,
+                      boxSizing: 'border-box',
+                      border: `2px solid ${on ? 'var(--fg-1)' : 'transparent'}`,
+                      boxShadow: on ? `0 0 20px ${f.color}` : `0 0 0 ${f.color}00`,
+                      transition: `border-color 200ms ${homeSecEase}, box-shadow 200ms ${homeSecEase}`,
+                    }}/>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
 
         <div className="flavor-grid">
-          {flavors.map(f => <FlavorCard key={f.id} flavor={f} onAdd={() => onAdd(f)} onSelect={() => onPick(f)} highlighted={current.id === f.id}/>)}
+          {flavors.map(f => (
+            <FlavorCard key={f.id} flavor={f}
+              onAdd={() => onAdd(f)} onSelect={() => onPick(f)}
+              highlighted={current.id === f.id}
+              canHover={canHover} reduced={reduced}/>
+          ))}
         </div>
       </div>
     </section>
   );
 }
 
-function FlavorCard({ flavor, onAdd, onSelect, highlighted }) {
-  const [hover, setHover] = useStateH(false);
+function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced }) {
+  const [hoverRaw, setHover] = useStateH(false);
+  const hover = canHover && hoverRaw;
+  const lift = hover && !reduced;
   return (
     <article
       onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
-      onClick={onSelect}
       style={{
         background: 'var(--surface-card)',
         border: `1px solid ${highlighted ? flavor.color : (hover ? 'var(--border-2)' : 'var(--border-1)')}`,
-        borderRadius: 20,
+        borderRadius: 'var(--radius-lg)',
         padding: 24,
         boxShadow: hover ? `0 18px 48px ${flavor.color}22, var(--shadow-lg)` : 'var(--shadow-md)',
-        transform: hover ? 'translateY(-4px)' : 'none',
-        transition: 'all 280ms var(--ease-slime)',
+        transform: lift ? 'translateY(-4px)' : 'none',
+        transition: `transform 280ms ${homeSecEase}, box-shadow 280ms ${homeSecEase}, border-color 280ms ${homeSecEase}`,
         position: 'relative', overflow: 'hidden',
-        cursor: 'pointer'
       }}>
       {/* corner badges */}
-      <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 3, display: 'flex', gap: 6 }}>
+      <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 3, display: 'flex', gap: 6, pointerEvents: 'none' }}>
         {flavor.flagship && <span className="badge" style={{ background: 'var(--accent)' }}>FLAGSHIP</span>}
         {flavor.isNew && <span className="badge" style={{ background: flavor.color }}>NEW</span>}
       </div>
       {/* SKU code */}
-      <div style={{ position: 'absolute', top: 18, right: 18, zIndex: 3 }}>
+      <div style={{ position: 'absolute', top: 18, right: 18, zIndex: 3, pointerEvents: 'none' }}>
         <span className="mono-sm" style={{ color: 'var(--fg-4)', fontSize: 10 }}>SL-{flavor.id.slice(0,3).toUpperCase()}</span>
       </div>
 
       {/* glow */}
-      <div style={{
+      <div aria-hidden="true" style={{
         position: 'absolute',
         top: '50%', left: '50%',
         width: 280, height: 280,
@@ -645,34 +718,46 @@ function FlavorCard({ flavor, onAdd, onSelect, highlighted }) {
         background: `radial-gradient(circle, ${flavor.color}55, transparent 60%)`,
         filter: 'blur(30px)',
         opacity: hover ? 1 : 0.5,
-        transition: 'opacity 280ms',
+        transition: `opacity 280ms ${homeSecEase}`,
+        pointerEvents: 'none',
       }}/>
 
-      <div style={{
-        height: 320, display: 'flex', justifyContent: 'center', alignItems: 'center',
-        position: 'relative', marginBottom: 16,
-        transform: hover ? 'translateY(-8px) rotate(-3deg)' : 'none',
-        transition: 'transform 380ms var(--ease-slime)',
-      }}>
-        <Can flavor={flavor} height={300}/>
-      </div>
+      {/* bottle area — selects this flavor's theme */}
+      <button type="button" onClick={onSelect}
+        aria-label={`Preview ${flavor.name} theme`}
+        style={{
+          display: 'flex', justifyContent: 'center', alignItems: 'center',
+          width: '100%', height: 320, padding: 0, margin: '0 0 16px',
+          background: 'transparent', border: 0, borderRadius: 12,
+          color: 'inherit', cursor: 'pointer',
+          position: 'relative',
+        }}>
+        <span style={{
+          display: 'flex', justifyContent: 'center', alignItems: 'center',
+          transform: lift ? 'translateY(-8px) rotate(-3deg)' : 'none',
+          transition: 'transform 380ms var(--ease-slime)',
+        }}>
+          <Can flavor={flavor} height={300}/>
+        </span>
+      </button>
 
       <div className="h3" style={{ fontSize: 22 }}>{flavor.name}</div>
       <div className="body" style={{ fontSize: 13, marginTop: 6, marginBottom: 18, color: 'var(--fg-3)' }}>
         {flavor.tagline}
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ font: '700 18px JetBrains Mono', color: flavor.color }}>${flavor.price.toFixed(2)}<span style={{ fontSize: 11, color: 'var(--fg-3)', fontWeight: 500 }}> /CAN</span></div>
-        <button onClick={e => { e.stopPropagation(); onAdd(); }}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative' }}>
+        <div style={{ font: '700 18px var(--font-mono)', color: flavor.color }}>${flavor.price.toFixed(2)}<span style={{ fontSize: 11, color: 'var(--fg-3)', fontWeight: 500 }}> /CAN</span></div>
+        <button type="button" onClick={e => { e.stopPropagation(); onAdd(); }}
+          aria-label={`Add ${flavor.name} to fridge`}
           style={{
             background: hover ? flavor.color : 'var(--surface-pill)',
             color: hover ? '#0E0F0A' : flavor.color,
             border: `1px solid ${flavor.color}`,
             borderRadius: 999, padding: '8px 14px',
-            font: '600 13px Space Grotesk, sans-serif',
+            font: '600 13px var(--font-ui)',
             display: 'flex', gap: 6, alignItems: 'center',
             cursor: 'pointer',
-            transition: 'all 220ms',
+            transition: `background-color 220ms ${homeSecEase}, color 220ms ${homeSecEase}, border-color 220ms ${homeSecEase}, box-shadow 220ms ${homeSecEase}`,
             boxShadow: hover ? `0 0 16px ${flavor.color}88` : 'none',
           }}>
           <Icon name="plus" size={14}/> Add
@@ -684,87 +769,143 @@ function FlavorCard({ flavor, onAdd, onSelect, highlighted }) {
 
 // ─────────────────────────────────────────────────────────────
 // SCROLL STORY — three-act scroll-driven section
+// (reduced motion: the three acts render stacked, in normal flow)
 // ─────────────────────────────────────────────────────────────
+const homeSecStoryActs = [
+  { eyebrow: 'ACT 01 · THE PROBLEM',  title: 'Energy drinks were built for warehouses.',     body: "Sugar bombs and stim cocktails tuned for forklift shifts, not 6-hour ranked grinds. You crash. You jitter. You tilt." },
+  { eyebrow: 'ACT 02 · THE SHIFT',    title: 'We rebuilt the can from the inside out.',      body: "75mg of clean caffeine paired with L-theanine. Real fruit, not flavor science. Six electrolytes that pull water in, not push it out." },
+  { eyebrow: 'ACT 03 · THE RESULT',   title: 'Locked in. All session. Every time.',          body: "Smoother focus. Cleaner aim. No 4pm wall. No 1am collapse. Just calm, sustained, hydrated performance." },
+];
+
+function homeSecStoryAct(a) {
+  return (
+    <>
+      <div className="eyebrow" style={{ marginBottom: 24, color: 'var(--accent)' }}>{a.eyebrow}</div>
+      <h2 className="display-lg" style={{ marginBottom: 24 }}>{a.title}</h2>
+      <p className="body-lg" style={{ maxWidth: 600 }}>{a.body}</p>
+    </>
+  );
+}
+
 function ScrollStory() {
+  // Static stacked layout for reduced motion, and for viewports too short to hold
+  // the sticky frame (nav + progress + act copy) without clipping.
+  const reducedMotion = homeSecUseMedia('(prefers-reduced-motion: reduce)');
+  const shortViewport = homeSecUseMedia('(max-height: 600px)');
+  const reduced = reducedMotion || shortViewport;
   const ref = useRefH(null);
   const [progress, setProgress] = useStateH(0);
   useEffectH(() => {
-    const onScroll = () => {
+    if (reduced) return;
+    let raf = 0;
+    const measure = () => {
+      raf = 0;
       const el = ref.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
       const total = rect.height - window.innerHeight;
-      const p = Math.max(0, Math.min(1, -rect.top / total));
+      const p = total > 0 ? Math.max(0, Math.min(1, -rect.top / total)) : 0;
       setProgress(p);
     };
-    onScroll();
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(measure); };
+    measure();
     window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [reduced]);
 
-  const acts = [
-    { eyebrow: 'ACT 01 · THE PROBLEM',  title: 'Energy drinks were built for warehouses.',     body: "Sugar bombs and stim cocktails tuned for forklift shifts, not 6-hour ranked grinds. You crash. You jitter. You tilt." },
-    { eyebrow: 'ACT 02 · THE SHIFT',    title: 'We rebuilt the can from the inside out.',      body: "75mg of clean caffeine paired with L-theanine. Real fruit, not flavor science. Six electrolytes that pull water in, not push it out." },
-    { eyebrow: 'ACT 03 · THE RESULT',   title: 'Locked in. All session. Every time.',          body: "Smoother focus. Cleaner aim. No 4pm wall. No 1am collapse. Just calm, sustained, hydrated performance." },
-  ];
+  const acts = homeSecStoryActs;
+  const bg = 'linear-gradient(180deg, var(--ink-800) 0%, var(--ink-900) 100%)';
+
+  if (reduced) {
+    return (
+      <section className="section" style={{ position: 'relative', overflow: 'hidden', background: bg }} data-screen-label="03 Scroll Story">
+        <img src="assets/mark-slime.png" alt="" style={{
+          position: 'absolute',
+          right: -100, top: '50%',
+          width: 700,
+          transform: 'translateY(-50%) translateX(200px)',
+          opacity: 0.18,
+          pointerEvents: 'none',
+        }}/>
+        <div className="container" style={{ position: 'relative', zIndex: 2 }}>
+          <div style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 80 }}>
+            {acts.map((a, i) => <div key={i}>{homeSecStoryAct(a)}</div>)}
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section ref={ref} style={{ position: 'relative', height: '300vh' }} data-screen-label="03 Scroll Story">
       <div style={{
         position: 'sticky', top: 0,
         height: '100vh',
+        boxSizing: 'border-box',
+        paddingTop: 96, // clear the sticky nav so the centered copy never sits under it
         display: 'flex', alignItems: 'center',
         overflow: 'hidden',
-        background: 'linear-gradient(180deg, var(--ink-800) 0%, var(--ink-900) 100%)',
+        background: bg,
       }}>
-        {/* moving slime mark */}
+        {/* moving slime mark — scroll-linked, transform/opacity only, no transition */}
         <img src="assets/mark-slime.png" alt="" style={{
           position: 'absolute',
           right: -100, top: '50%',
           width: 700,
           transform: `translateY(-50%) translateX(${(1 - progress) * 200}px) rotate(${progress * 90}deg)`,
           opacity: 0.18 + progress * 0.18,
-          transition: 'all 0.05s linear',
-          filter: 'hue-rotate(0deg)',
+          willChange: 'transform, opacity',
           pointerEvents: 'none',
         }}/>
 
-        <div className="container" style={{ position: 'relative', zIndex: 2, width: '100%' }}>
-          <div style={{ maxWidth: 720 }}>
-            {acts.map((a, i) => {
-              const start = i / 3;
-              const end = (i + 1) / 3;
-              const visible = progress >= start && progress < end;
-              const local = (progress - start) * 3;
-              return (
-                <div key={i} style={{
-                  position: 'absolute',
-                  opacity: visible ? Math.max(0, Math.min(1, local < 0.15 ? local / 0.15 : (local > 0.85 ? (1 - local) / 0.15 : 1))) : 0,
-                  transform: `translateY(${visible ? 0 : 20}px)`,
-                  transition: 'opacity 240ms, transform 240ms',
-                  pointerEvents: visible ? 'auto' : 'none',
-                  width: 'calc(100% - 64px)',
-                  maxWidth: 720,
-                }}>
-                  <div className="eyebrow" style={{ marginBottom: 24, color: 'var(--accent)' }}>{a.eyebrow}</div>
-                  <h2 className="display-lg" style={{ marginBottom: 24 }}>{a.title}</h2>
-                  <p className="body-lg" style={{ maxWidth: 600 }}>{a.body}</p>
-                </div>
-              );
-            })}
-          </div>
-
+        <div className="container" style={{ position: 'relative', zIndex: 2, width: '100%', boxSizing: 'border-box' }}>
           {/* progress bar */}
-          <div style={{
-            position: 'absolute', bottom: 60, left: 32, right: 32,
-            height: 2, background: 'var(--border-1)',
-          }}>
-            <div style={{ width: `${progress * 100}%`, height: '100%', background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)' }}/>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 12, font: '500 11px JetBrains Mono', color: 'var(--fg-3)', letterSpacing: '0.08em' }}>
+          <div aria-hidden="true" style={{ marginBottom: 56 }}>
+            <div style={{ position: 'relative', height: 2, background: 'var(--border-1)' }}>
+              <div style={{
+                position: 'absolute', inset: 0,
+                background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)',
+                transform: `scaleX(${progress})`, transformOrigin: 'left center',
+              }}/>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 12, font: '500 11px var(--font-mono)', color: 'var(--fg-3)', letterSpacing: '0.08em' }}>
               <span>01 PROBLEM</span>
               <span>02 SHIFT</span>
               <span>03 RESULT</span>
             </div>
+          </div>
+
+          {/* acts share one grid cell, so the block is as tall as the tallest act */}
+          <div style={{ display: 'grid', maxWidth: 720 }}>
+            {acts.map((a, i) => {
+              const start = i / 3;
+              const end = (i + 1) / 3;
+              const first = i === 0;
+              const last = i === acts.length - 1;
+              const visible = (first || progress >= start) && (last || progress < end);
+              const local = (progress - start) * 3;
+              const fadeIn = first ? 1 : local / 0.15;
+              const fadeOut = last ? 1 : (1 - local) / 0.15;
+              const opacity = visible ? Math.max(0, Math.min(1, fadeIn, fadeOut)) : 0;
+              return (
+                <div key={i} style={{
+                  gridArea: '1 / 1',
+                  minWidth: 0,
+                  opacity,
+                  transform: `translateY(${visible ? 0 : 20}px)`,
+                  // opacity tracks scroll directly; only the visibility toggle's nudge eases
+                  transition: `transform 240ms ${homeSecEase}`,
+                  pointerEvents: visible ? 'auto' : 'none',
+                }}>
+                  {homeSecStoryAct(a)}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -792,7 +933,7 @@ function Streamers() {
           </h2>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 20 }}>
           {quotes.map((q, i) => (
             <div key={i} className="card" style={{ padding: 32 }}>
               {/* live indicator */}
@@ -801,7 +942,7 @@ function Streamers() {
                 <Icon name="twitch" size={18}/>
               </div>
               {/* avatar placeholder */}
-              <div style={{
+              <div aria-hidden="true" style={{
                 width: 56, height: 56,
                 borderRadius: 999,
                 background: `linear-gradient(135deg, ${['#CAE00F', '#FF3D5C', '#3D8BFF'][i]}, ${['#7A8A00', '#A8132B', '#0F4FB3'][i]})`,
@@ -809,16 +950,16 @@ function Streamers() {
                 position: 'relative',
                 boxShadow: '0 0 20px rgba(0,0,0,0.4)'
               }}>
-                <div style={{ position: 'absolute', inset: 4, borderRadius: 999, background: 'var(--ink-800)', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '700 18px Space Grotesk', color: 'var(--fg-1)' }}>
+                <div style={{ position: 'absolute', inset: 4, borderRadius: 999, background: 'var(--ink-800)', display: 'flex', alignItems: 'center', justifyContent: 'center', font: '700 18px var(--font-ui)', color: 'var(--fg-1)' }}>
                   {q.name.split(' ').map(s => s[0]).join('').slice(0, 2)}
                 </div>
               </div>
-              <div style={{ font: '600 16px Space Grotesk', marginBottom: 4 }}>{q.name}</div>
+              <div style={{ font: '600 16px var(--font-ui)', marginBottom: 4 }}>{q.name}</div>
               <div className="mono-sm" style={{ color: 'var(--fg-3)', marginBottom: 24 }}>{q.handle} · {q.game}</div>
               <p className="body" style={{ fontSize: 15, color: 'var(--fg-1)' }}>"{q.quote}"</p>
               <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border-1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span className="mono-sm" style={{ color: 'var(--fg-4)' }}>{q.reach}</span>
-                <span style={{ display: 'flex', gap: 4, color: 'var(--accent)' }}>
+                <span role="img" aria-label="5 out of 5 stars" style={{ display: 'flex', gap: 4, color: 'var(--accent)' }}>
                   {[1,2,3,4,5].map(n => <Icon key={n} name="star" size={12}/>)}
                 </span>
               </div>
@@ -872,10 +1013,10 @@ function SubscribeBar({ onGo }) {
               borderRadius: 999,
               background: 'rgba(6, 13, 8, 0.6)',
               backdropFilter: 'blur(8px)',
-              font: '500 13px Inter',
+              font: '500 13px var(--font-body)',
               color: 'var(--fg-2)',
             }}>
-              <span style={{ color: 'var(--accent)' }}><Icon name={icon} size={14}/></span>
+              <span aria-hidden="true" style={{ color: 'var(--accent)' }}><Icon name={icon} size={14}/></span>
               {label}
             </span>
           ))}
