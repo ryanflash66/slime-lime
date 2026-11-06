@@ -13,20 +13,6 @@ const FLAGSHIP_TABS = [
   { id: 'reviews', label: 'Reviews' },
 ];
 
-// Same logic as useFlavorTheme (shell.jsx), callable imperatively.
-function flagshipApplyTheme(f) {
-  if (!f) return;
-  const root = document.documentElement;
-  root.style.setProperty('--accent', f.color);
-  root.style.setProperty('--accent-deep', f.deep);
-  root.style.setProperty('--accent-soft', f.soft);
-  const m = f.color.match(/#(..)(..)(..)/);
-  if (m) {
-    const r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
-    root.style.setProperty('--accent-glow', `rgba(${r},${g},${b},0.55)`);
-  }
-}
-
 function flagshipPrefersReducedMotion() {
   return !!(window.matchMedia && window.matchMedia(FLAGSHIP_REDUCED_QUERY).matches);
 }
@@ -77,14 +63,7 @@ function FlagshipPage({ flavor, onAdd }) {
   const bottleH = flagshipBottleHeight(vw);
   const glowSize = Math.round(bottleH * 0.775);
 
-  // ── Theme lock: Lemon-Lime while mounted, restore the picked flavor on unmount.
-  // Child effects run before App's useFlavorTheme, which only re-runs when `flavor` changes.
-  const flavorRef = useRefP(flavor);
-  flavorRef.current = flavor;
-  useLayoutEffectP(() => {
-    flagshipApplyTheme(flagship);
-    return () => flagshipApplyTheme(flavorRef.current);
-  }, []);
+  // Theme lock (Lemon-Lime on this page) lives in App: see useFlavorTheme in Slime Lime.html.
 
   // ── Tabs: sliding pill + panel enter + chart reveal
   const listRef = useRefP(null);

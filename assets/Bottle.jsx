@@ -62,7 +62,7 @@ function Bottle({
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`}
-         width="auto" height={height}
+         width={height * W / H} height={height}
          style={{ display: 'block', overflow: 'visible' }}
          xmlns="http://www.w3.org/2000/svg">
       <defs>

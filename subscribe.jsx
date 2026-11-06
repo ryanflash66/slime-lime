@@ -93,7 +93,7 @@ function SubscribeSummaryRow({ flavor, qty, animateIn, reduceMotion }) {
   );
 }
 
-function SubscribePage({ onAdd }) {
+function SubscribePage({ onAdd, onSubscribe }) {
   const flavors = window.FLAVORS;
   // One entry per picked can, in the order they were added (newest last).
   // May hold more cans than the pack after a size change; see activeOrder.
@@ -138,11 +138,21 @@ function SubscribePage({ onAdd }) {
   const discounted = basePrice * (1 - cad.save / 100);
   const savings = basePrice - discounted;
 
+  // Cart lines carry the subscriber price and cadence; a repeat checkout replaces the pack.
   const checkout = () => {
-    Object.entries(picks).forEach(([id, qty]) => {
+    const lines = Object.entries(picks).map(([id, qty]) => {
       const f = flavors.find(x => x.id === id);
-      if (f) onAdd(f, qty);
-    });
+      if (!f || qty <= 0) return null;
+      return {
+        ...f, qty,
+        id: `${f.id}--sub`,
+        price: f.price * (1 - cad.save / 100),
+        sub: `SUB · ${cad.label.toUpperCase()} · −${cad.save}%`,
+        subscription: cad.id,
+      };
+    }).filter(Boolean);
+    if (onSubscribe) onSubscribe(lines);
+    else lines.forEach(l => onAdd(l, l.qty));
   };
 
   // Rows that mount after the first render animate in.

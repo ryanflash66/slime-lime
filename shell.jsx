@@ -121,13 +121,18 @@ function useCart() {
     });
     setCartOpen(true);
   };
+  // A subscription is one pack: checking out again replaces it instead of stacking.
+  const replaceSubscription = lines => {
+    setCart(c => [...c.filter(i => !i.subscription), ...lines]);
+    setCartOpen(true);
+  };
   const remove = id => setCart(c => c.filter(i => i.id !== id));
   const inc = id => setCart(c => c.map(i => i.id === id ? { ...i, qty: i.qty + 1 } : i));
   const dec = id => setCart(c => c.map(i => i.id === id ? { ...i, qty: Math.max(0, i.qty - 1) } : i).filter(i => i.qty > 0));
   const count = cart.reduce((s, i) => s + i.qty, 0);
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
-  return { cart, count, total, add, inc, dec, remove, cartOpen, setCartOpen };
+  return { cart, count, total, add, replaceSubscription, inc, dec, remove, cartOpen, setCartOpen };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -565,6 +570,8 @@ function CartDrawer({ open, items, onClose, onInc, onDec, total }) {
   const dur = open ? inMs : outMs;
   const ease = reduced ? SHELL_EASE_OUT : SHELL_EASE_DRAWER;
   const visibilityT = `visibility 0s linear ${open ? 0 : dur}ms`;
+  // Subscription orders always ship free (see FAQ); one-off orders need $40+.
+  const freeShip = total >= 40 || items.some(i => i.subscription);
   const progress = Math.min(1, total / 40);
 
   const browse = () => {
@@ -662,9 +669,9 @@ function CartDrawer({ open, items, onClose, onInc, onDec, total }) {
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, font: '400 12px var(--font-mono)', color: 'var(--fg-3)', letterSpacing: '0.04em' }}>
             <span>SHIPPING</span>
-            <span>{total >= 40 ? 'FREE' : `$${(40 - total).toFixed(2)} TO FREE`}</span>
+            <span>{freeShip ? 'FREE' : `$${(40 - total).toFixed(2)} TO FREE`}</span>
           </div>
-          {total < 40 && (
+          {!freeShip && (
             <div aria-hidden="true" style={{ background: 'var(--ink-900)', borderRadius: 999, height: 4, overflow: 'hidden', marginBottom: 16 }}>
               <div style={{
                 width: '100%', height: '100%', background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)',
