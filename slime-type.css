@@ -1,0 +1,71 @@
+/* Slime Lime typography
+   Load before this file:
+   <link rel="stylesheet" href="https://use.typekit.net/ooz0jtv.css">                          Al Fresco (Adobe Fonts)
+   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&family=Space+Grotesk:wght@600;700&display=swap">
+*/
+:root {
+  --sl-font-script: "al-fresco", "Brush Script MT", cursive;
+  --sl-font-ui: "Space Grotesk", system-ui, sans-serif;
+  --sl-font-body: "Inter", system-ui, sans-serif;
+  --sl-font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --sl-ink: #060D08;      /* background ink */
+  --sl-paper: #FBFBF5;    /* label white */
+  --sl-text: #0E0F0A;     /* text on light */
+  --sl-text-on-dark: #FAFCEF;
+  --sl-lime: #CAE00F;
+
+  /* type scale (fluid) */
+  --sl-display-size: clamp(4rem, 8vw + 1rem, 10rem);   /* 64px to 160px */
+  --sl-h1-size: clamp(2.5rem, 4vw + 1rem, 4rem);       /* 40px to 64px */
+  --sl-h2-size: clamp(2rem, 2.5vw + 1rem, 2.75rem);    /* 32px to 44px */
+  --sl-h3-size: 1.5rem;
+}
+
+/* ---------- Special-use display: "Glossy Slime" (slime-display.js upgrades it to layered SVG) ---------- */
+.sl-display {
+  display: inline-block;
+  font-family: var(--sl-font-script);
+  font-weight: 700;
+  font-size: var(--sl-display-size);
+  line-height: 1;
+  font-feature-settings: "calt", "liga", "swsh";   /* Al Fresco swash forms */
+  /* no-JS fallback: flat juice colour with an ink keyline */
+  color: var(--sl-lime);
+  -webkit-text-stroke: 0.04em var(--sl-ink);
+  paint-order: stroke fill;
+  text-shadow: 0.03em 0.04em 0 var(--sl-ink), 0.06em 0.08em 0 var(--sl-ink), 0.1em 0.13em 0 var(--sl-lime);
+}
+.sl-display[data-palette="cherry"]     { color: #FF3D5C; }
+.sl-display[data-palette="blue-rasp"]  { color: #3D8BFF; }
+.sl-display[data-palette="mango"]      { color: #FF9A1F; }
+.sl-display[data-palette="grape"]      { color: #B96BFF; }
+.sl-display[data-palette="watermelon"] { color: #FF6B8A; }
+.sl-display.is-rendered { color: inherit; -webkit-text-stroke: 0; text-shadow: none; }
+/* the SVG overhangs its box (keyline, pop shadow, swash): pull it back so it sits on the text baseline */
+.sl-display.is-rendered > svg { margin: -0.26em -0.34em -0.4em -0.34em; }
+
+.sl-sr {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ---------- Headings: Al Fresco Bold ---------- */
+.sl-h1, .sl-h2 {
+  font-family: var(--sl-font-script);
+  font-weight: 700;
+  letter-spacing: 0;
+  font-feature-settings: "calt", "liga";
+  text-wrap: balance;
+  margin: 0;
+}
+.sl-h1 { font-size: var(--sl-h1-size); line-height: 1.05; }
+.sl-h2 { font-size: var(--sl-h2-size); line-height: 1.1; }
+/* Al Fresco "titling" removes the ascender/descender loops: cleaner for longer headings */
+.sl-h1--clean, .sl-h2--clean { font-feature-settings: "calt", "liga", "titl"; }
+
+/* H3 and below stay in the UI face for scanability */
+.sl-h3 { font-family: var(--sl-font-ui); font-weight: 700; font-size: var(--sl-h3-size); line-height: 1.2; margin: 0; }
+.sl-eyebrow { font-family: var(--sl-font-ui); font-weight: 700; font-size: 0.8125rem; letter-spacing: 0.14em; text-transform: uppercase; margin: 0; }
+.sl-body { font-family: var(--sl-font-body); font-size: 1rem; line-height: 1.55; }
+.sl-stat { font-family: var(--sl-font-mono); font-weight: 500; letter-spacing: 0.08em; }
