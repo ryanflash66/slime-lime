@@ -152,8 +152,6 @@
      Mono: JetBrains Mono — nutrition stats, code, tickers
   */
   --font-display: "Bricolage Grotesque", "Space Grotesk", system-ui, sans-serif;
-  /* Al Fresco Bold (Adobe Fonts) — page + section titles and the glossy display lettering */
-  --font-script: "al-fresco", "Bricolage Grotesque", cursive;
   --font-ui:      "Space Grotesk", "Inter", system-ui, sans-serif;
   --font-body:    "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
