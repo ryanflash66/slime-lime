@@ -296,7 +296,13 @@ function create(gltf, container, opts = {}) {
     backdrop.scale.set(pw, ph, 1);
     backdrop.position.set(0, AIM + 0.6 * (1 - FAR), BACK_Z);
     const px = Math.min(2048, Math.round(w * Math.min(window.devicePixelRatio || 1, 1.5)));
-    backdropCanvas.width = px; backdropCanvas.height = Math.round(px * ph / pw);
+    const cw = px, ch = Math.round(px * ph / pw);
+    if (cw !== backdropCanvas.width || ch !== backdropCanvas.height) {
+      backdropCanvas.width = cw; backdropCanvas.height = ch;
+      // three allocates immutable texture storage on first upload; a resized canvas would only
+      // partially overwrite it (stale flavor showing through), so free it and let it re-allocate.
+      backdropTex.dispose();
+    }
     unitPx = (px / pw) * FAR;                       // canvas px per world unit at the bottle's depth
     bx = 0.5 + (root.position.x * FAR) / pw;
     by = 0.5 - ((root.position.y + 2.4 - AIM) * FAR) / ph;
