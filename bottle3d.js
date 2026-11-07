@@ -17,7 +17,20 @@ const FILL_Y = 0.138;                       // liquid fill line, metres above th
 // ── Shared assets (loaded once per page) ───────────────────────
 const texLoader = new THREE.TextureLoader();
 const labelCache = new Map();
-const bgImages = new Map();                 // url -> HTMLImageElement once loaded (null while loading)
+const bgImages = new Map();                 // url -> HTMLImageElement once loaded
+const bgReq = new Map();                    // url -> Promise<HTMLImageElement> (shared by instances + preload)
+function requestBg(url) {
+  if (!bgReq.has(url)) {
+    bgReq.set(url, new Promise((res, rej) => {
+      const img = new Image();
+      img.decoding = 'async';
+      img.onload = () => { bgImages.set(url, img); res(img); };
+      img.onerror = () => { bgReq.delete(url); rej(new Error('bg failed: ' + url)); };
+      img.src = url;
+    }));
+  }
+  return bgReq.get(url);
+}
 function labelTexture(file, renderer) {
   if (labelCache.has(file)) return labelCache.get(file);
   const p = new Promise((res, rej) => texLoader.load(asset('labels/' + file), t => {
@@ -203,12 +216,28 @@ function create(gltf, container, opts = {}) {
   const loadBg = () => {
     const url = state.bg;
     if (!url || bgImages.has(url)) return;
-    const img = new Image();
-    img.decoding = 'async';
-    bgImages.set(url, null);
-    img.onload = () => { bgImages.set(url, img); if (!destroyed && state.bg === url) { paintBackdrop(); dirty = true; loop(); } };
-    img.onerror = () => bgImages.delete(url);
-    img.src = url;
+    requestBg(url).then(() => { if (!destroyed && state.bg === url) { paintBackdrop(); dirty = true; loop(); } }, () => {});
+  };
+
+  // Flavor-switch crossfade: snapshot the outgoing stage onto a plane just in front of the backdrop
+  // and fade it out while the liquid colour tweens (ease-out quart, 450ms; 200ms under reduced motion).
+  const prevCanvas = document.createElement('canvas');
+  const prevTex = new THREE.CanvasTexture(prevCanvas); prevTex.colorSpace = THREE.SRGBColorSpace;
+  const prevMat = new THREE.MeshBasicMaterial({ map: prevTex, toneMapped: false, depthWrite: false, transparent: true, opacity: 0 });
+  const backdropPrev = new THREE.Mesh(backdrop.geometry, prevMat);
+  backdropPrev.renderOrder = -1; backdropPrev.visible = false; scene.add(backdropPrev);
+  const FADE_MS = reduced ? 200 : 450;
+  const fromJuice = new THREE.Color(), toJuice = new THREE.Color();
+  let fadeStart = -1;
+  const startFade = () => {
+    const W = backdropCanvas.width, H = backdropCanvas.height;
+    if (!W || !H) return;
+    if (prevCanvas.width !== W || prevCanvas.height !== H) { prevCanvas.width = W; prevCanvas.height = H; prevTex.dispose(); }
+    prevCanvas.getContext('2d').drawImage(backdropCanvas, 0, 0);
+    prevTex.needsUpdate = true;
+    prevMat.opacity = 1; backdropPrev.visible = true;
+    if (Liquid) fromJuice.copy(Liquid.material.color);   // current (possibly mid-tween) colour: retargets cleanly
+    fadeStart = performance.now();
   };
 
   // ── The bottle (shared geometry from the GLB; materials cloned per instance) ──
@@ -301,6 +330,8 @@ function create(gltf, container, opts = {}) {
     const pw = visW * FAR * 1.08, ph = visH * FAR * 1.08;
     backdrop.scale.set(pw, ph, 1);
     backdrop.position.set(0, AIM + 0.6 * (1 - FAR), BACK_Z);
+    backdropPrev.scale.copy(backdrop.scale);
+    backdropPrev.position.copy(backdrop.position); backdropPrev.position.z += 0.01;
     const px = Math.min(2048, Math.round(w * Math.min(window.devicePixelRatio || 1, 1.5)));
     const cw = px, ch = Math.round(px * ph / pw);
     if (cw !== backdropCanvas.width || ch !== backdropCanvas.height) {
@@ -355,8 +386,15 @@ function create(gltf, container, opts = {}) {
     } else if (dirty) {
       bottle.rotation.y = REST; root.rotation.z = -0.05; bottle.position.y = 0.18;
     }
+    if (fadeStart >= 0) {
+      const k = Math.min(1, (now - fadeStart) / FADE_MS), e = ease(k);
+      prevMat.opacity = 1 - e;
+      if (Liquid) { Liquid.material.color.lerpColors(fromJuice, toJuice, e); Liquid.material.emissive.copy(Liquid.material.color); }
+      if (k >= 1) { fadeStart = -1; backdropPrev.visible = false; }
+      dirty = true;
+    }
     if (dirty) { renderer.render(scene, camera); dirty = false; }
-    if (!reduced || spinStart >= 0) loop();
+    if (!reduced || spinStart >= 0 || fadeStart >= 0) loop();
   };
   const loop = () => { if (!raf && visible && !document.hidden) raf = requestAnimationFrame(tick); };
 
@@ -372,12 +410,22 @@ function create(gltf, container, opts = {}) {
   return {
     canvas,
     whenReady,
+    // Warm the caches for other flavors (stage photos + label textures) so a switch has nothing to wait on.
+    preload(list) {
+      (list || []).forEach(o => {
+        if (o.bg) requestBg(o.bg).catch(() => {});
+        if (o.id) { labelTexture(`label-front-${o.id}.webp`, renderer).catch(() => {}); labelTexture(`cap-${o.id}.webp`, renderer).catch(() => {}); }
+      });
+    },
     setFrame(next) { frame = { ...frame, ...next }; layout(); loop(); },
     setFlavor(next) {
       const changed = next.juice && next.juice !== state.juice;
       const idChanged = next.id && next.id !== state.id;
+      if (changed || idChanged) startFade();
       state = { ...state, ...next };
       paint();
+      toJuice.set(state.juice);
+      if (fadeStart >= 0 && Liquid) { Liquid.material.color.copy(fromJuice); Liquid.material.emissive.copy(fromJuice); }
       if (idChanged) applyLabels();
       if (changed && !reduced) { spinFrom = TAU; spinStart = performance.now(); }
       loop();
@@ -390,6 +438,7 @@ function create(gltf, container, opts = {}) {
       // Model geometry and label textures are shared across instances; dispose only what this one made.
       ownMaterials.forEach(m => m.dispose());
       bub.geometry.dispose(); bub.dispose();
+      prevTex.dispose(); prevMat.dispose();
       [backdrop, shadow, pool].forEach(o => { o.geometry.dispose(); if (o.material.map) o.material.map.dispose(); o.material.dispose(); });
       envRT.dispose(); renderer.dispose();
       canvas.remove();
