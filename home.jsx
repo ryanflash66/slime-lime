@@ -42,8 +42,9 @@ const heroSpecs = [
 
 const heroWord = f => (f.short || f.name).replace(/[-·]/g, ' ').replace(/\s+/g, ' ').trim();
 const hero3DOpts = f => ({
-  juice: f.color, accent: f.accent, flavor: f.name, subtitle: f.sub || 'Clean focus',
+  id: f.id, juice: f.color, accent: f.accent, flavor: f.name, subtitle: f.sub || 'Clean focus',
   stats: '75MG · 5G SUGAR · 12FL OZ', word: heroWord(f),
+  bg: `assets/scenes/bg-${f.id}-${window.innerWidth < 900 ? 'tall' : 'wide'}.webp`,
 });
 
 // The WebGL stage. Falls back to the SVG bottle until bottle3d.js loads, or if WebGL is unavailable.
@@ -60,7 +61,8 @@ function HeroStage({ flavor, frame, fallbackH }) {
       if (!window.SL3D || !window.SL3D.supported) { setFailed(true); return; }
       try {
         instRef.current = window.SL3D.create(hostRef.current, { ...hero3DOpts(flavor), frame });
-        requestAnimationFrame(() => requestAnimationFrame(() => { if (!cancelled) setReady(true); }));
+        Promise.resolve(instRef.current.whenReady).then(() =>
+          requestAnimationFrame(() => requestAnimationFrame(() => { if (!cancelled) setReady(true); })));
       } catch (err) {
         setFailed(true);
       }
@@ -96,9 +98,11 @@ function HeroStage({ flavor, frame, fallbackH }) {
           paddingRight: `${Math.max(0, -frame.x) * 100}%`,
           opacity: failed ? 1 : 0.9,
         }}>
-          <div style={{ transform: 'rotate(-3deg)', filter: `drop-shadow(0 30px 60px ${flavor.color}55)` }}>
-            <Can flavor={flavor} height={fallbackH}/>
-          </div>
+          {/* Still render: bottle is 70% of the image height, base at 90%. */}
+          <img src={`assets/bottle/renders/hero-${flavor.id}.webp`} alt="" width={1000} height={1200}
+            decoding="async" fetchpriority="high"
+            style={{ height: fallbackH, width: 'auto', transform: 'rotate(-3deg)',
+              filter: `drop-shadow(0 30px 60px ${flavor.color}55)` }}/>
         </div>
       )}
     </div>
@@ -485,36 +489,25 @@ function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced })
         <span className="mono-sm" style={{ color: 'var(--fg-4)', fontSize: 10 }}>SL-{flavor.id.slice(0,3).toUpperCase()}</span>
       </div>
 
-      {/* glow */}
-      <div aria-hidden="true" style={{
-        position: 'absolute',
-        top: '50%', left: '50%',
-        width: 280, height: 280,
-        transform: 'translate(-50%, -50%)',
-        background: `radial-gradient(circle, ${flavor.color}55, transparent 60%)`,
-        filter: 'blur(30px)',
-        opacity: hover ? 1 : 0.5,
-        transition: `opacity 280ms ${homeSecEase}`,
-        pointerEvents: 'none',
-      }}/>
-
       {/* bottle area — selects this flavor's theme */}
       <button type="button" onClick={onSelect}
         aria-label={`Preview ${flavor.name} theme`}
         style={{
-          display: 'flex', justifyContent: 'center', alignItems: 'center',
-          width: '100%', height: 320, padding: 0, margin: '0 0 16px',
-          background: 'transparent', border: 0, borderRadius: 12,
+          display: 'block', width: '100%', aspectRatio: '4 / 5', padding: 0, margin: '0 0 18px',
+          background: 'var(--ink-900)', border: 0, borderRadius: 12, overflow: 'hidden',
           color: 'inherit', cursor: 'pointer',
           position: 'relative',
         }}>
-        <span style={{
-          display: 'flex', justifyContent: 'center', alignItems: 'center',
-          transform: lift ? 'translateY(-8px) rotate(-3deg)' : 'none',
-          transition: 'transform 380ms var(--ease-slime)',
-        }}>
-          <Can flavor={flavor} height={300}/>
-        </span>
+        <img src={`assets/scenes/splash-${flavor.id}-640.webp`}
+          srcSet={`assets/scenes/splash-${flavor.id}-640.webp 640w, assets/scenes/splash-${flavor.id}.webp 1200w`}
+          sizes="(max-width: 700px) 92vw, 420px"
+          width={640} height={800} loading="lazy" decoding="async"
+          alt=""
+          style={{
+            display: 'block', width: '100%', height: '100%', objectFit: 'cover',
+            transform: lift ? 'scale(1.04)' : 'none',
+            transition: `transform 600ms ${homeSecEase}`,
+          }}/>
       </button>
 
       <div className="h3" style={{ fontSize: 22 }}>{flavor.name}</div>
@@ -522,7 +515,7 @@ function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced })
         {flavor.tagline}
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative' }}>
-        <div style={{ font: '700 18px var(--font-mono)', color: flavor.color }}>${flavor.price.toFixed(2)}<span style={{ fontSize: 11, color: 'var(--fg-3)', fontWeight: 500 }}> /CAN</span></div>
+        <div style={{ font: '700 18px var(--font-mono)', color: flavor.color }}>${flavor.price.toFixed(2)}<span style={{ fontSize: 11, color: 'var(--fg-3)', fontWeight: 500 }}> /BOTTLE</span></div>
         <button type="button" onClick={e => { e.stopPropagation(); onAdd(); }}
           aria-label={`Add ${flavor.name} to fridge`}
           style={{
@@ -548,9 +541,12 @@ function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced })
 // (reduced motion: the three acts render stacked, in normal flow)
 // ─────────────────────────────────────────────────────────────
 const homeSecStoryActs = [
-  { eyebrow: 'ACT 01 · THE PROBLEM',  title: 'Energy drinks were built for warehouses.',     body: "Sugar bombs and stim cocktails tuned for forklift shifts, not 6-hour ranked grinds. You crash. You jitter. You tilt." },
-  { eyebrow: 'ACT 02 · THE SHIFT',    title: 'We rebuilt the can from the inside out.',      body: "75mg of clean caffeine paired with L-theanine. Real fruit, not flavor science. Six electrolytes that pull water in, not push it out." },
-  { eyebrow: 'ACT 03 · THE RESULT',   title: 'Locked in. All session. Every time.',          body: "Smoother focus. Cleaner aim. No 4pm wall. No 1am collapse. Just calm, sustained, hydrated performance." },
+  { eyebrow: 'ACT 01 · THE PROBLEM',  title: 'Energy drinks were built for warehouses.',     body: "Sugar bombs and stim cocktails tuned for forklift shifts, not 6-hour ranked grinds. You crash. You jitter. You tilt.",
+    alt: 'A glowing Slime Lime bottle standing among crushed energy drink cans on a warehouse floor' },
+  { eyebrow: 'ACT 02 · THE SHIFT',    title: 'We rebuilt the bottle from the inside out.',      body: "75mg of clean caffeine paired with L-theanine. Real fruit, not flavor science. Six electrolytes that pull water in, not push it out.",
+    alt: 'A slice of lime dropping into glowing green water, trailing bubbles' },
+  { eyebrow: 'ACT 03 · THE RESULT',   title: 'Locked in. All session. Every time.',          body: "Smoother focus. Cleaner aim. No 4pm wall. No 1am collapse. Just calm, sustained, hydrated performance.",
+    alt: 'A gamer in silhouette, lit by the green glow of a monitor in a dark room' },
 ];
 
 function homeSecStoryAct(a) {
@@ -569,6 +565,7 @@ function ScrollStory() {
   const reducedMotion = homeSecUseMedia('(prefers-reduced-motion: reduce)');
   const shortViewport = homeSecUseMedia('(max-height: 600px)');
   const reduced = reducedMotion || shortViewport;
+  const wide = homeSecUseMedia('(min-width: 900px)');
   const ref = useRefH(null);
   const [progress, setProgress] = useStateH(0);
   useEffectH(() => {
@@ -595,22 +592,32 @@ function ScrollStory() {
   }, [reduced]);
 
   const acts = homeSecStoryActs;
-  const bg = 'linear-gradient(180deg, var(--ink-800) 0%, var(--ink-900) 100%)';
+  const actVisible = i => (i === 0 || progress >= i / 3) && (i === acts.length - 1 || progress < (i + 1) / 3);
+  const actOpacity = i => {
+    if (!actVisible(i)) return 0;
+    const local = (progress - i / 3) * 3;
+    const fadeIn = i === 0 ? 1 : local / 0.15;
+    const fadeOut = i === acts.length - 1 ? 1 : (1 - local) / 0.15;
+    return Math.max(0, Math.min(1, fadeIn, fadeOut));
+  };
+  const bg ='linear-gradient(180deg, var(--ink-800) 0%, var(--ink-900) 100%)';
 
   if (reduced) {
     return (
       <section className="section" style={{ position: 'relative', overflow: 'hidden', background: bg }} data-screen-label="03 Scroll Story">
-        <img src="assets/mark-slime.png" alt="" style={{
-          position: 'absolute',
-          right: -100, top: '50%',
-          width: 700,
-          transform: 'translateY(-50%) translateX(200px)',
-          opacity: 0.18,
-          pointerEvents: 'none',
-        }}/>
         <div className="container" style={{ position: 'relative', zIndex: 2 }}>
-          <div style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 80 }}>
-            {acts.map((a, i) => <div key={i}>{homeSecStoryAct(a)}</div>)}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 80 }}>
+            {acts.map((a, i) => (
+              <div key={i} style={{ display: 'grid', gap: 32, alignItems: 'center',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))' }}>
+                <div style={{ maxWidth: 720 }}>{homeSecStoryAct(a)}</div>
+                <img src={`assets/scenes/story-act-0${i + 1}-640.webp`}
+                  srcSet={`assets/scenes/story-act-0${i + 1}-640.webp 640w, assets/scenes/story-act-0${i + 1}.webp 1200w`}
+                  sizes="(min-width: 900px) 40vw, 92vw" width={640} height={800}
+                  loading="lazy" decoding="async" alt={a.alt}
+                  style={{ width: '100%', maxWidth: 460, height: 'auto', borderRadius: 'var(--radius-lg)', justifySelf: 'center' }}/>
+              </div>
+            ))}
           </div>
         </div>
       </section>
@@ -628,16 +635,30 @@ function ScrollStory() {
         overflow: 'hidden',
         background: bg,
       }}>
-        {/* moving slime mark — scroll-linked, transform/opacity only, no transition */}
-        <img src="assets/mark-slime.png" alt="" style={{
-          position: 'absolute',
-          right: -100, top: '50%',
-          width: 700,
-          transform: `translateY(-50%) translateX(${(1 - progress) * 200}px) rotate(${progress * 90}deg)`,
-          opacity: 0.18 + progress * 0.18,
-          willChange: 'transform, opacity',
-          pointerEvents: 'none',
-        }}/>
+        {/* act imagery — crossfades with the copy; scroll-linked, transform/opacity only, no transition */}
+        <div aria-hidden="true" style={{
+          position: 'absolute', pointerEvents: 'none', overflow: 'hidden',
+          ...(wide
+            ? { top: 0, right: 0, bottom: 0, width: '50%',
+                WebkitMaskImage: 'linear-gradient(90deg, transparent 0%, #000 35%)', maskImage: 'linear-gradient(90deg, transparent 0%, #000 35%)' }
+            : { inset: 0 }),
+        }}>
+          {acts.map((a, i) => {
+            const local = Math.max(0, Math.min(1, (progress - i / 3) * 3));
+            return (
+              <img key={i} src={`assets/scenes/story-act-0${i + 1}-640.webp`}
+                srcSet={`assets/scenes/story-act-0${i + 1}-640.webp 640w, assets/scenes/story-act-0${i + 1}.webp 1200w`}
+                sizes={wide ? '50vw' : '100vw'} alt="" decoding="async"
+                style={{
+                  position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
+                  opacity: actOpacity(i) * (wide ? 1 : 0.32),
+                  transform: `scale(${1.08 - local * 0.08})`,
+                  willChange: 'transform, opacity',
+                }}/>
+            );
+          })}
+          {!wide && <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(6,13,8,0.2), rgba(6,13,8,0.85))' }}/>}
+        </div>
 
         <div className="container" style={{ position: 'relative', zIndex: 2, width: '100%', boxSizing: 'border-box' }}>
           {/* progress bar */}
@@ -659,15 +680,8 @@ function ScrollStory() {
           {/* acts share one grid cell, so the block is as tall as the tallest act */}
           <div style={{ display: 'grid', maxWidth: 720 }}>
             {acts.map((a, i) => {
-              const start = i / 3;
-              const end = (i + 1) / 3;
-              const first = i === 0;
-              const last = i === acts.length - 1;
-              const visible = (first || progress >= start) && (last || progress < end);
-              const local = (progress - start) * 3;
-              const fadeIn = first ? 1 : local / 0.15;
-              const fadeOut = last ? 1 : (1 - local) / 0.15;
-              const opacity = visible ? Math.max(0, Math.min(1, fadeIn, fadeOut)) : 0;
+              const visible = actVisible(i);
+              const opacity = actOpacity(i);
               return (
                 <div key={i} style={{
                   gridArea: '1 / 1',
@@ -755,7 +769,7 @@ function SubscribeBar({ onGo }) {
     <section className="section" style={{ position: 'relative', overflow: 'hidden' }} data-screen-label="05 Subscribe Pitch">
       <div style={{
         position: 'absolute', inset: 0,
-        backgroundImage: 'url(assets/bg-leaves.png)',
+        backgroundImage: 'url(assets/scenes/lifestyle-desk.webp)',
         backgroundSize: 'cover', backgroundPosition: 'center',
         opacity: 0.3,
       }}/>

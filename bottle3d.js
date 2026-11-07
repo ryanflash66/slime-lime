@@ -1,180 +1,32 @@
-// SL3D — real-time 3D render of the Slime Lime square bottle (three.js, ES module).
-// Exposes window.SL3D.create(container, opts) -> { setFlavor(opts), destroy() } and fires
-// a 'sl3d-ready' event on window once loaded. Callers fall back to the SVG <Bottle> until then.
+// SL3D — real-time 3D render of the Slime Lime double-bubble bottle (three.js, ES module).
+// Loads the Claude Design model (assets/bottle/slime-lime-bottle.glb), then exposes
+// window.SL3D.create(container, opts) -> { setFlavor(opts), setFrame(frame), destroy() } and fires
+// a 'sl3d-ready' event on window. Callers show the still render until then.
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const TAU = Math.PI * 2;
-const SEGS = 160;
+const ASSETS = new URL('assets/bottle/', import.meta.url);
+const asset = p => new URL(p, ASSETS).href;
 
-// ── Geometry ───────────────────────────────────────────────────
-// Superellipse cross-section: p≈5 is a soft square, p=2 a circle.
-function ringPoint(a, p, t) {
-  const c = Math.cos(t), s = Math.sin(t);
-  const e = 2 / p;
-  return [a * Math.sign(c) * Math.pow(Math.abs(c), e), a * Math.sign(s) * Math.pow(Math.abs(s), e)];
-}
+// Model units are metres (cap top at 0.1534 m). Scale so the bottle is 4.4 scene units tall.
+const MODEL_H = 0.1534, SCALE = 4.4 / MODEL_H;
+const FILL_Y = 0.138;                       // liquid fill line, metres above the base
 
-// Sweep a profile [{ y, a, p }] into a closed tube with a bottom cap.
-function sweep(profile, segs = SEGS, capBottom = true) {
-  const pos = [], idx = [];
-  profile.forEach(({ y, a, p }) => {
-    for (let i = 0; i < segs; i++) {
-      const [x, z] = ringPoint(a, p, (i / segs) * TAU);
-      pos.push(x, y, z);
-    }
-  });
-  for (let r = 0; r < profile.length - 1; r++) {
-    for (let i = 0; i < segs; i++) {
-      const a = r * segs + i, b = r * segs + ((i + 1) % segs);
-      const c = a + segs, d = b + segs;
-      idx.push(a, c, b, b, c, d);
-    }
-  }
-  if (capBottom) {
-    const center = pos.length / 3;
-    pos.push(0, profile[0].y, 0);
-    for (let i = 0; i < segs; i++) idx.push(center, i, (i + 1) % segs);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx);
-  g.computeVertexNormals();
-  return g;
-}
-
-// Bottle profile, from the SVG mockup (100px = 1 unit; base at y=0).
-const BODY = 0.8, BODY_P = 5;
-const bottleProfile = inset => {
-  const k = a => Math.max(0.05, a - inset);
-  return [
-    { y: 0.00 + inset, a: k(0.70), p: BODY_P },
-    { y: 0.03 + inset * 0.5, a: k(0.77), p: BODY_P },
-    { y: 0.10, a: k(BODY), p: BODY_P },
-    { y: 3.45, a: k(BODY), p: BODY_P },
-    { y: 3.62, a: k(0.78), p: 4.4 },
-    { y: 3.80, a: k(0.68), p: 3.4 },
-    { y: 3.98, a: k(0.56), p: 2.4 },
-    { y: 4.10, a: k(0.51), p: 2.0 },
-    { y: 4.40, a: k(0.50), p: 2.0 },
-  ];
-};
-
-// Liquid: same shape, inset, filled to just below the shoulder, flat top.
-function liquidGeometry() {
-  const prof = bottleProfile(0.035).filter(r => r.y < 3.5);
-  prof.push({ y: 3.5, a: BODY - 0.035, p: BODY_P });
-  const g = sweep(prof);
-  // flat meniscus disc
-  const pos = Array.from(g.attributes.position.array);
-  const idx = Array.from(g.index.array);
-  const top = (prof.length - 1) * SEGS;
-  const c = pos.length / 3;
-  pos.push(0, 3.5, 0);
-  for (let i = 0; i < SEGS; i++) idx.push(c, top + ((i + 1) % SEGS), top + i);
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  out.setIndex(idx);
-  out.computeVertexNormals();
-  return out;
-}
-
-// Ridged twist cap.
-function capGeometry(r = 0.53, h = 0.44, ridges = 56) {
-  const g = new THREE.CylinderGeometry(r, r, h, ridges * 4, 1, false);
-  const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const x = p.getX(i), z = p.getZ(i), y = p.getY(i);
-    const rr = Math.hypot(x, z);
-    if (rr < r * 0.98 || Math.abs(y) > h / 2 - 1e-4 && rr < r * 0.99) continue;
-    const t = Math.atan2(z, x);
-    const k = 1 - 0.022 * (Math.cos(t * ridges) > 0 ? 1 : 0);
-    p.setX(i, x * k); p.setZ(i, z * k);
-  }
-  g.computeVertexNormals();
-  return g;
-}
-
-// Flat label plane wrapped onto the bottle's front face.
-function labelGeometry(w, h, cy) {
-  const g = new THREE.PlaneGeometry(w, h, 48, 1);
-  const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const x = p.getX(i);
-    const u = Math.min(0.999, Math.abs(x) / BODY);
-    const z = BODY * Math.pow(1 - Math.pow(u, BODY_P), 1 / BODY_P);
-    p.setZ(i, z + 0.006);
-    p.setY(i, p.getY(i) + cy);
-  }
-  g.computeVertexNormals();
-  return g;
-}
-
-// ── Textures ───────────────────────────────────────────────────
-function blobPath(ctx, cx, cy, r, bumps, ratio, rot = 0) {
-  const n = bumps * 2, pts = [];
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * TAU - Math.PI / 2 + rot;
-    const rad = i % 2 === 0 ? r * (1 + ratio) : r * (1 - ratio * 0.35);
-    pts.push([cx + Math.cos(a) * rad, cy + Math.sin(a) * rad]);
-  }
-  ctx.beginPath();
-  for (let i = 0; i <= n; i++) {
-    const p = pts[i % n], q = pts[(i + 1) % n];
-    const mx = (p[0] + q[0]) / 2, my = (p[1] + q[1]) / 2;
-    if (i === 0) ctx.moveTo(mx, my); else ctx.quadraticCurveTo(p[0], p[1], mx, my);
-  }
-  ctx.closePath();
-}
-
-function drawLabel(canvas, o) {
-  const S = canvas.width, ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, S, S);
-  ctx.save();
-  blobPath(ctx, S / 2, S / 2, S * 0.4, 6, 0.14);
-  ctx.shadowColor = 'rgba(0,0,0,0.25)'; ctx.shadowBlur = S * 0.01;
-  ctx.fillStyle = '#FBFBF5'; ctx.fill();
-  ctx.restore();
-  // subtle paper grain
-  ctx.save();
-  blobPath(ctx, S / 2, S / 2, S * 0.4, 6, 0.14); ctx.clip();
-  const grd = ctx.createLinearGradient(0, 0, S, S);
-  grd.addColorStop(0, 'rgba(255,255,255,0.0)'); grd.addColorStop(1, 'rgba(0,0,0,0.06)');
-  ctx.fillStyle = grd; ctx.fillRect(0, 0, S, S);
-  ctx.restore();
-
-  const ink = '#0E0F0A';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-  const spaced = (txt, x, y, track) => {
-    if ('letterSpacing' in ctx) { ctx.letterSpacing = track + 'px'; ctx.fillText(txt, x + track / 2, y); ctx.letterSpacing = '0px'; return; }
-    ctx.fillText(txt, x, y);
-  };
-  ctx.fillStyle = ink;
-  ctx.font = `700 ${S * 0.042}px "Space Grotesk", sans-serif`;
-  spaced(o.brand || 'SLIME LIME', S / 2, S * 0.29, S * 0.012);
-
-  const [l1, l2] = (o.flavor || 'Lemon · Lime').split(' · ');
-  ctx.fillStyle = o.accent || '#7A8A00';
-  const big = l2 ? 0.118 : 0.13;
-  ctx.font = `800 ${S * big}px "Bricolage Grotesque", "Space Grotesk", sans-serif`;
-  // shrink long names to fit the label
-  const fit = (txt, max) => { let f = S * big; ctx.font = `800 ${f}px "Bricolage Grotesque", sans-serif`; while (ctx.measureText(txt).width > max && f > 20) { f -= 4; ctx.font = `800 ${f}px "Bricolage Grotesque", sans-serif`; } };
-  fit(l1, S * 0.66);
-  spaced(l1, S / 2, l2 ? S * 0.47 : S * 0.53, -S * 0.004);
-  if (l2) { fit(l2, S * 0.66); spaced(l2, S / 2, S * 0.585, -S * 0.004); }
-
-  ctx.fillStyle = ink;
-  ctx.font = `600 ${S * 0.038}px "Space Grotesk", sans-serif`;
-  spaced((o.subtitle || 'CLEAN FOCUS').toUpperCase(), S / 2, l2 ? S * 0.665 : S * 0.64, S * 0.011);
-  ctx.fillStyle = 'rgba(14,15,10,0.7)';
-  ctx.font = `500 ${S * 0.026}px "JetBrains Mono", monospace`;
-  spaced(o.stats || '75MG · 5G SUGAR · 12FL OZ', S / 2, S * 0.75, S * 0.006);
-}
-
-function drawSticker(canvas, color) {
-  const S = canvas.width, ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, S, S);
-  blobPath(ctx, S / 2, S / 2, S * 0.33, 5, 0.32); ctx.fillStyle = '#FFFFFF'; ctx.fill();
-  blobPath(ctx, S / 2, S / 2, S * 0.24, 5, 0.32); ctx.fillStyle = color; ctx.fill();
+// ── Shared assets (loaded once per page) ───────────────────────
+const texLoader = new THREE.TextureLoader();
+const labelCache = new Map();
+const bgImages = new Map();                 // url -> HTMLImageElement once loaded (null while loading)
+function labelTexture(file, renderer) {
+  if (labelCache.has(file)) return labelCache.get(file);
+  const p = new Promise((res, rej) => texLoader.load(asset('labels/' + file), t => {
+    t.flipY = false;                        // glTF UV convention
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 4;
+    res(t);
+  }, undefined, rej));
+  labelCache.set(file, p);
+  return p;
 }
 
 function radialTexture(stops, size = 256) {
@@ -200,7 +52,7 @@ function studioEnv(renderer, tint) {
   strip(0.8, 9, 0xffffff, 4, [5, 1, 1.5], -Math.PI / 2.2);      // rim strip, right
   strip(4, 1.2, 0xffffff, 1.4, [0, 6, 1], 0, Math.PI / 2);      // top softbox
   strip(10, 3, tint, 1.6, [0, -1, -6]);                          // flavor glow behind
-  strip(0.5, 6, 0xffffff, 0.5, [1.5, 1, 7], Math.PI);              // narrow front fill
+  strip(0.5, 6, 0xffffff, 0.5, [1.5, 1, 7], Math.PI);            // narrow front fill
   const pm = new THREE.PMREMGenerator(renderer);
   const rt = pm.fromScene(scene, 0.02);
   pm.dispose();
@@ -208,10 +60,60 @@ function studioEnv(renderer, tint) {
   return rt;
 }
 
+// Carbonation clinging to the inside of both glass bubbles (seeded, so every render matches).
+// Sphere centres/radii in metres, from the hand-off spec.
+function bubbles() {
+  const spheres = [
+    { cy: 0.0358, r: 0.0394, phi: [0.6, 2.45], n: 70 },   // bottom bubble
+    { cy: 0.1155, r: 0.0292, phi: [0.95, 2.5], n: 40 },    // top bubble (below the fill line)
+  ];
+  const N = spheres.reduce((s, b) => s + b.n, 0);
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const mesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 8),
+    new THREE.MeshPhysicalMaterial({ color: 0xe9eedc, roughness: 0.12, metalness: 0, clearcoat: 1, envMapIntensity: 1.3 }), N);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  let i = 0;
+  spheres.forEach(({ cy, r, phi, n }) => {
+    for (let k = 0; k < n; k++) {
+      const p = phi[0] + rnd() * (phi[1] - phi[0]);
+      const t = (rnd() - 0.5) * Math.PI * 1.3;            // around the front (+Z), some on the sides
+      v.set(r * Math.sin(p) * Math.sin(t), cy + r * Math.cos(p), r * Math.sin(p) * Math.cos(t));
+      if (v.y > FILL_Y - 0.002) v.y = FILL_Y - 0.002 - rnd() * 0.01;
+      m.compose(v, q, sc.setScalar(0.00016 + Math.pow(rnd(), 4) * 0.0005));
+      mesh.setMatrixAt(i++, m);
+    }
+  });
+  return mesh;
+}
+
+// Backlit-juice look: saturated, glowing toward the centre, deeper at the rim and the base.
+function liquidMaterial(juice) {
+  const mat = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(juice), roughness: 0.4, metalness: 0,
+    emissive: new THREE.Color(juice), emissiveIntensity: 0.6, envMapIntensity: 0.15,
+  });
+  mat.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vP;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvP = position;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vP;')
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        float vH = clamp(vP.y / ${FILL_Y.toFixed(4)}, 0.0, 1.0);
+        float facing = clamp(dot(normalize(vNormal), normalize(vViewPosition)), 0.0, 1.0);
+        float core = smoothstep(0.05, 1.0, facing);
+        float glow = mix(0.1, 1.0, pow(core, 1.6)) * mix(0.55, 1.05, smoothstep(0.0, 0.95, vH));
+        totalEmissiveRadiance *= glow;
+        diffuseColor.rgb *= mix(0.04, 0.24, core);`);
+  };
+  return mat;
+}
+
 // ── Public API ─────────────────────────────────────────────────
-function create(container, opts = {}) {
+function create(gltf, container, opts = {}) {
   const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let state = { juice: '#CAE00F', accent: '#7A8A00', ...opts };
+  let state = { id: 'lemon-lime', juice: '#CAE00F', accent: '#7A8A00', ...opts };
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -258,9 +160,20 @@ function create(container, opts = {}) {
     const tint = k => `rgb(${[c.r, c.g, c.b].map((v, i) => Math.round(v * 255 * k + base[i] * (1 - k))).join(',')})`;
     ctx.fillStyle = 'rgb(6,13,8)'; ctx.fillRect(0, 0, W, H);
     const cx = bx * W, cy = by * H, R = unitPx * 5.2;
+    // Flavor stage photo (cover-fit, centred on the bottle where the crop allows), dimmed for the type.
+    const img = state.bg && bgImages.get(state.bg);
+    if (img && img.naturalWidth) {
+      const s = Math.max(W / img.naturalWidth, H / img.naturalHeight);
+      const iw = img.naturalWidth * s, ih = img.naturalHeight * s;
+      const dx = Math.min(0, Math.max(W - iw, cx - iw / 2)), dy = Math.min(0, Math.max(H - ih, cy - ih * 0.55));
+      ctx.drawImage(img, dx, dy, iw, ih);
+      ctx.fillStyle = 'rgba(6,13,8,0.38)'; ctx.fillRect(0, 0, W, H);
+    }
     const g = ctx.createRadialGradient(cx, cy + unitPx * 0.9, 0, cx, cy + unitPx * 0.9, R);
     g.addColorStop(0, tint(0.5)); g.addColorStop(0.3, tint(0.2)); g.addColorStop(0.65, tint(0.05)); g.addColorStop(1, 'rgb(6,13,8)');
+    ctx.globalAlpha = img ? 0.45 : 1;
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = img ? 0.7 : 1;
     const word = (state.word || '').toUpperCase();
     if (word) {
       const lines = word.split(/\s+/).slice(0, 2);
@@ -279,100 +192,74 @@ function create(container, opts = {}) {
       lines.forEach((l, i) => ctx.fillText(l, cx, top + i * lineH));
       if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
     }
+    ctx.globalAlpha = 1;
     backdropTex.needsUpdate = true;
   };
-  const bottle = new THREE.Group(); root.add(bottle);
-
-  // Glass
-  const glassMat = new THREE.MeshPhysicalMaterial({
-    color: 0xffffff, metalness: 0, roughness: 0.02, transmission: 1, thickness: 0.2, ior: 1.5,
-    clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 1.15, specularIntensity: 1, transparent: false,
-  });
-  const glass = new THREE.Mesh(sweep(bottleProfile(0)), glassMat);
-  bottle.add(glass);
-
-  // Liquid (opaque so the glass transmission refracts it)
-  // Backlit-juice look: saturated, glowing toward the centre, deeper at the edges and the base.
-  const liquidMat = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color(state.juice), roughness: 0.4, metalness: 0,
-    emissive: new THREE.Color(state.juice), emissiveIntensity: 0.78, envMapIntensity: 0.3,
-  });
-  liquidMat.onBeforeCompile = sh => {
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vP;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvP = position;');
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vP;')
-      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-        float vH = clamp(vP.y / 3.5, 0.0, 1.0);
-        float edge = smoothstep(0.18, 0.8, min(abs(vP.x), abs(vP.z)) / 0.765);
-        float facing = clamp(dot(normalize(vNormal), normalize(vViewPosition)), 0.0, 1.0);
-        float glow = mix(1.0, 0.28, edge) * mix(0.42, 1.08, smoothstep(0.0, 0.95, vH)) * mix(0.6, 1.0, facing);
-        totalEmissiveRadiance *= glow;
-        diffuseColor.rgb *= mix(0.62, 0.22, edge);`);
+  const loadBg = () => {
+    const url = state.bg;
+    if (!url || bgImages.has(url)) return;
+    const img = new Image();
+    img.decoding = 'async';
+    bgImages.set(url, null);
+    img.onload = () => { bgImages.set(url, img); if (!destroyed && state.bg === url) { paintBackdrop(); dirty = true; loop(); } };
+    img.onerror = () => bgImages.delete(url);
+    img.src = url;
   };
-  const liquid = new THREE.Mesh(liquidGeometry(), liquidMat);
-  bottle.add(liquid);
 
-  // Carbonation clinging to the inside of the glass (seeded, so every render matches).
-  {
-    const N = 90;
-    let seed = 7;
-    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    const bub = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 8),
-      new THREE.MeshPhysicalMaterial({ color: 0xe9eedc, roughness: 0.12, metalness: 0,
-        clearcoat: 1, envMapIntensity: 1.3 }), N);
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3();
-    for (let i = 0; i < N; i++) {
-      // mostly on the front face, some on the sides
-      const t = (rnd() - 0.5) * Math.PI * 0.55 + (rnd() < 0.75 ? 0 : (Math.PI / 2) * (rnd() < 0.5 ? 1 : -1));
-      const y = 0.12 + Math.pow(rnd(), 0.8) * 3.3;
-      const [x, z] = ringPoint(BODY - 0.022, BODY_P, Math.PI / 2 - t);
-      const r = 0.005 + Math.pow(rnd(), 4) * 0.014;
-      m.compose(v.set(x, y, z), q, sc.setScalar(r));
-      bub.setMatrixAt(i, m);
-    }
-    bottle.add(bub);
+  // ── The bottle (shared geometry from the GLB; materials cloned per instance) ──
+  const bottle = new THREE.Group(); root.add(bottle);
+  const model = gltf.scene.clone(true);
+  model.scale.setScalar(SCALE);
+  bottle.add(model);
+  const parts = {};
+  const ownMaterials = [];
+  model.traverse(o => {
+    if (!o.isMesh) return;
+    o.material = o.material.clone(); ownMaterials.push(o.material);
+    parts[o.name] = o;
+  });
+  const { Glass, Liquid, Cap, LabelFront, LabelBack, CapSticker } = parts;
+  if (Glass) {
+    Object.assign(Glass.material, {
+      transmission: 1, roughness: 0.03, ior: 1.52, thickness: 0.005,
+      clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 1.15, specularIntensity: 1,
+    });
+    Glass.renderOrder = 2;
   }
-
-  // Cap
-  const capMat = new THREE.MeshStandardMaterial({ color: 0xc9c9c9, metalness: 1, roughness: 0.3, envMapIntensity: 1.1 });
-  const cap = new THREE.Mesh(capGeometry(), capMat);
-  cap.position.y = 4.4 + 0.22; bottle.add(cap);
-  const capTop = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.03, 12, 96), capMat);
-  capTop.rotation.x = Math.PI / 2; capTop.position.y = 4.4 + 0.44; bottle.add(capTop);
-  const neckRing = new THREE.Mesh(new THREE.CylinderGeometry(0.545, 0.545, 0.05, 96),
-    new THREE.MeshStandardMaterial({ color: 0x1a1a1a, metalness: 0.6, roughness: 0.4 }));
-  neckRing.position.y = 4.4 + 0.02; bottle.add(neckRing);
-
-  // Cap sticker (wraps the cap front)
-  const stickerCanvas = document.createElement('canvas'); stickerCanvas.width = stickerCanvas.height = 512;
-  const stickerTex = new THREE.CanvasTexture(stickerCanvas); stickerTex.colorSpace = THREE.SRGBColorSpace;
-  const sticker = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.538, 0.538, 0.46, 48, 1, true, -Math.PI * 0.27 + Math.PI / 2 - Math.PI / 2, Math.PI * 0.54),
-    new THREE.MeshPhysicalMaterial({ map: stickerTex, transparent: true, alphaTest: 0.4, roughness: 0.35, clearcoat: 0.5 }));
-  sticker.position.y = cap.position.y; bottle.add(sticker);
-
-  // Front label
-  const labelCanvas = document.createElement('canvas'); labelCanvas.width = labelCanvas.height = 1024;
-  const labelTex = new THREE.CanvasTexture(labelCanvas);
-  labelTex.colorSpace = THREE.SRGBColorSpace; labelTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  const label = new THREE.Mesh(labelGeometry(1.52, 1.52, 1.62),
-    new THREE.MeshPhysicalMaterial({ map: labelTex, transparent: true, alphaTest: 0.35, roughness: 0.42, clearcoat: 0.35, clearcoatRoughness: 0.2 }));
-  bottle.add(label);
+  if (Liquid) {
+    Liquid.material.dispose(); ownMaterials.splice(ownMaterials.indexOf(Liquid.material), 1);
+    Liquid.material = liquidMaterial(state.juice); ownMaterials.push(Liquid.material);
+  }
+  if (Cap) Object.assign(Cap.material, { metalness: 1, roughness: 0.3, envMapIntensity: 1.1 });
+  [LabelFront, LabelBack].forEach(l => { if (l) { l.renderOrder = 3; if (l.material.map) l.material.map.anisotropy = renderer.capabilities.getMaxAnisotropy(); } });
+  const bub = bubbles(); model.add(bub); ownMaterials.push(bub.material);
 
   // Contact shadow + light pool tinted by the juice
-  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.3),
+  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(3.8, 1.6),
     new THREE.MeshBasicMaterial({ map: radialTexture([[0, 'rgba(0,0,0,0.85)'], [0.45, 'rgba(0,0,0,0.35)'], [1, 'rgba(0,0,0,0)']]), transparent: true, depthWrite: false }));
   shadow.rotation.x = -Math.PI / 2; shadow.position.y = 0.002; root.add(shadow);
   const poolMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
-  const pool = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 2.2), poolMat);
+  const pool = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 2.6), poolMat);
   pool.rotation.x = -Math.PI / 2; pool.position.y = 0.001; root.add(pool);
 
+  // Flavor labels: swap the front label + cap sticker maps once the textures arrive.
+  let labelReq = 0;
+  const applyLabels = () => {
+    const req = ++labelReq, id = state.id;
+    return Promise.all([
+      labelTexture(`label-front-${id}.webp`, renderer),
+      labelTexture(`cap-${id}.webp`, renderer),
+    ]).then(([front, capTex]) => {
+      if (destroyed || req !== labelReq) return;
+      if (LabelFront) { LabelFront.material.map = front; LabelFront.material.needsUpdate = true; }
+      if (CapSticker) { CapSticker.material.map = capTex; CapSticker.material.needsUpdate = true; }
+      dirty = true; loop();
+    }).catch(() => {});
+  };
+
   const paint = () => {
-    drawLabel(labelCanvas, state); labelTex.needsUpdate = true;
-    drawSticker(stickerCanvas, state.juice); stickerTex.needsUpdate = true;
-    liquidMat.color.set(state.juice); liquidMat.emissive.set(state.juice);
+    loadBg();
+    if (Liquid) { Liquid.material.color.set(state.juice); Liquid.material.emissive.set(state.juice); }
     if (poolMat.map) poolMat.map.dispose();
     const c = new THREE.Color(state.juice);
     const rgba = a => `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${a})`;
@@ -394,11 +281,11 @@ function create(container, opts = {}) {
     camera.aspect = w / h;
     layout();
   };
-  // Fit ~6.2 units (bottle + cap + float) into `fill` of the height, widening on narrow aspect ratios,
+  // Fit ~6.2 units tall (bottle + float + headroom) and ~3.2 wide into `fill` of the view,
   // then slide the bottle to frame.x (-1 = left edge, 1 = right edge of the view).
   const layout = () => {
     if (!w || !h) return;
-    const needH = (6.2 / frame.fill) * Math.max(1, (0.5 / frame.fill) / camera.aspect);
+    const needH = Math.max(6.2, 3.2 / camera.aspect) / frame.fill;
     camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan((needH / 2) / DIST));
     camera.updateProjectionMatrix();
     const visH = needH, visW = visH * camera.aspect;
@@ -412,14 +299,14 @@ function create(container, opts = {}) {
     backdropCanvas.width = px; backdropCanvas.height = Math.round(px * ph / pw);
     unitPx = (px / pw) * FAR;                       // canvas px per world unit at the bottle's depth
     bx = 0.5 + (root.position.x * FAR) / pw;
-    by = 0.5 - ((root.position.y + 2.45 - AIM) * FAR) / ph;
+    by = 0.5 - ((root.position.y + 2.4 - AIM) * FAR) / ph;
     paintBackdrop();
     dirty = true;
   };
   const ro = new ResizeObserver(resize); ro.observe(container); resize();
 
   // ── Motion ──
-  let px = 0, py = 0, tx = 0, ty = 0, spin = 0, spinFrom = 0, spinStart = -1, visible = true, raf = 0;
+  let px = 0, py = 0, tx = 0, ty = 0, spinFrom = 0, spinStart = -1, visible = true, raf = 0;
   const onPointer = e => {
     const r = container.getBoundingClientRect();
     tx = ((e.clientX - r.left) / r.width - 0.5) * 2;
@@ -433,6 +320,7 @@ function create(container, opts = {}) {
   const onVis = () => { if (!document.hidden) loop(); };
   document.addEventListener('visibilitychange', onVis);
 
+  const REST = -0.3;                                // label turned slightly toward the copy
   const t0 = performance.now();
   const ease = t => 1 - Math.pow(1 - t, 4);
   const tick = now => {
@@ -446,36 +334,39 @@ function create(container, opts = {}) {
         s = spinFrom * (1 - ease(k));
         if (k >= 1) spinStart = -1;
       }
-      bottle.rotation.y = -0.38 + Math.sin(t * 0.45) * 0.16 + px * 0.35 + s;
+      bottle.rotation.y = REST + Math.sin(t * 0.45) * 0.16 + px * 0.35 + s;
       root.rotation.z = -0.05 + Math.sin(t * 0.3) * 0.015;
       root.rotation.x = py * 0.05;
       bottle.position.y = 0.18 + Math.sin(t * 0.9) * 0.05;
       shadow.scale.setScalar(1 - (bottle.position.y - 0.18) * 0.8);
       dirty = true;
     } else if (dirty) {
-      bottle.rotation.y = -0.38; root.rotation.z = -0.05; bottle.position.y = 0.18;
+      bottle.rotation.y = REST; root.rotation.z = -0.05; bottle.position.y = 0.18;
     }
     if (dirty) { renderer.render(scene, camera); dirty = false; }
     if (!reduced || spinStart >= 0) loop();
   };
   const loop = () => { if (!raf && visible && !document.hidden) raf = requestAnimationFrame(tick); };
 
-  // fonts must be ready before the label is drawn
-  const fontsReady = document.fonts && document.fonts.load
-    ? Promise.all(['800 80px "Bricolage Grotesque"', '700 40px "Space Grotesk"', '600 40px "Space Grotesk"', '500 20px "JetBrains Mono"'].map(f => document.fonts.load(f))).catch(() => {})
-    : Promise.resolve();
+  let destroyed = false;
   paint();
-  fontsReady.then(() => { if (!destroyed) { paint(); loop(); } });
+  // The backdrop type needs its font; repaint once it's loaded.
+  if (document.fonts && document.fonts.load) {
+    document.fonts.load('800 80px "Bricolage Grotesque"').then(() => { if (!destroyed) { paintBackdrop(); dirty = true; loop(); } }).catch(() => {});
+  }
+  const whenReady = applyLabels();
   loop();
 
-  let destroyed = false;
   return {
     canvas,
+    whenReady,
     setFrame(next) { frame = { ...frame, ...next }; layout(); loop(); },
     setFlavor(next) {
       const changed = next.juice && next.juice !== state.juice;
+      const idChanged = next.id && next.id !== state.id;
       state = { ...state, ...next };
       paint();
+      if (idChanged) applyLabels();
       if (changed && !reduced) { spinFrom = TAU; spinStart = performance.now(); }
       loop();
     },
@@ -484,10 +375,10 @@ function create(container, opts = {}) {
       cancelAnimationFrame(raf); ro.disconnect(); if (io) io.disconnect();
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('pointermove', onPointer);
-      scene.traverse(o => {
-        if (o.geometry) o.geometry.dispose();
-        if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
-      });
+      // Model geometry and label textures are shared across instances; dispose only what this one made.
+      ownMaterials.forEach(m => m.dispose());
+      bub.geometry.dispose(); bub.dispose();
+      [backdrop, shadow, pool].forEach(o => { o.geometry.dispose(); if (o.material.map) o.material.map.dispose(); o.material.dispose(); });
       envRT.dispose(); renderer.dispose();
       canvas.remove();
     },
@@ -499,5 +390,15 @@ function supported() {
   catch (e) { return false; }
 }
 
-window.SL3D = { create, supported: supported() };
-window.dispatchEvent(new Event('sl3d-ready'));
+const isSupported = supported();
+const ready = isSupported
+  ? new GLTFLoader().loadAsync(asset('slime-lime-bottle.glb'))
+  : Promise.reject(new Error('WebGL unavailable'));
+
+ready.then(gltf => {
+  window.SL3D = { create: (container, opts) => create(gltf, container, opts), supported: true };
+  window.dispatchEvent(new Event('sl3d-ready'));
+}, () => {
+  window.SL3D = { create() { throw new Error('3D unavailable'); }, supported: false };
+  window.dispatchEvent(new Event('sl3d-ready'));
+});
