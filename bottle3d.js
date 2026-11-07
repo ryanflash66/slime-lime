@@ -4,6 +4,7 @@
 // a 'sl3d-ready' event on window. Callers show the still render until then.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 const TAU = Math.PI * 2;
 const ASSETS = new URL('assets/bottle/', import.meta.url);
@@ -88,15 +89,19 @@ function bubbles() {
 }
 
 // Backlit-juice look: saturated, glowing toward the centre, deeper at the rim and the base.
-function liquidMaterial(juice) {
+// `node` is the Liquid mesh: the compressed GLB stores quantized positions with the
+// dequantization in the node transform, so map local y back to metres above the base.
+function liquidMaterial(juice, node) {
+  const yMap = { value: new THREE.Vector2(node ? node.scale.y : 1, node ? node.position.y : 0) };
   const mat = new THREE.MeshPhysicalMaterial({
     color: new THREE.Color(juice), roughness: 0.4, metalness: 0,
     emissive: new THREE.Color(juice), emissiveIntensity: 0.6, envMapIntensity: 0.15,
   });
   mat.onBeforeCompile = sh => {
+    sh.uniforms.uYMap = yMap;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vP;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvP = position;');
+      .replace('#include <common>', '#include <common>\nvarying vec3 vP;\nuniform vec2 uYMap;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvP = vec3(position.x, position.y * uYMap.x + uYMap.y, position.z);');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vP;')
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
@@ -221,14 +226,15 @@ function create(gltf, container, opts = {}) {
   const { Glass, Liquid, Cap, LabelFront, LabelBack, CapSticker } = parts;
   if (Glass) {
     Object.assign(Glass.material, {
-      transmission: 1, roughness: 0.03, ior: 1.52, thickness: 0.005,
+      // thickness is in local units; divide out the quantization scale on the node.
+      transmission: 1, roughness: 0.03, ior: 1.52, thickness: 0.005 / Glass.scale.x,
       clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 1.15, specularIntensity: 1,
     });
     Glass.renderOrder = 2;
   }
   if (Liquid) {
     Liquid.material.dispose(); ownMaterials.splice(ownMaterials.indexOf(Liquid.material), 1);
-    Liquid.material = liquidMaterial(state.juice); ownMaterials.push(Liquid.material);
+    Liquid.material = liquidMaterial(state.juice, Liquid); ownMaterials.push(Liquid.material);
   }
   if (Cap) Object.assign(Cap.material, { metalness: 1, roughness: 0.3, envMapIntensity: 1.1 });
   [LabelFront, LabelBack].forEach(l => { if (l) { l.renderOrder = 3; if (l.material.map) l.material.map.anisotropy = renderer.capabilities.getMaxAnisotropy(); } });
@@ -392,7 +398,8 @@ function supported() {
 
 const isSupported = supported();
 const ready = isSupported
-  ? new GLTFLoader().loadAsync(asset('slime-lime-bottle.glb'))
+  // The GLB is meshopt-compressed with WebP textures (gltf-transform webp + meshopt).
+  ? new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(asset('slime-lime-bottle.glb'))
   : Promise.reject(new Error('WebGL unavailable'));
 
 ready.then(gltf => {
