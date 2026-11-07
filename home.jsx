@@ -37,7 +37,7 @@ const heroSpecs = [
   { label: 'Caffeine', value: '75', unit: 'mg', sub: 'Clean · slow-release' },
   { label: 'Sugar', value: '5', unit: 'g', sub: 'Real fruit · low GI' },
   { label: 'Crash', value: '0', unit: '', sub: 'All session' },
-  { label: 'Volume', value: '12', unit: 'oz', sub: 'Square glass' },
+  { label: 'Volume', value: '12', unit: 'oz', sub: 'Per serving' },
 ];
 
 const heroWord = f => (f.short || f.name).replace(/[-·]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -196,7 +196,7 @@ function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
         Late nights deserve <span style={{ color: 'var(--accent)' }}>better fuel.</span>
       </h1>
       <p className="body-lg" style={{ maxWidth: 460, margin: '26px 0 34px', color: 'var(--fg-2)' }}>
-        5g sugar. 75mg clean caffeine. Zero crash. Real electrolytes — in a glass bottle built for the long session.
+        5g sugar. 75mg clean caffeine. Zero crash. Real electrolytes. Built for the long session.
       </p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 36 }}>
         <button onClick={onShop} className="btn btn-primary btn-xl" style={{ whiteSpace: 'nowrap', ...ctaFlex }}>
