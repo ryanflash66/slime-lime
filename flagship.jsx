@@ -183,7 +183,7 @@ function FlagshipPage({ flavor, onAdd }) {
             </div>
 
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px 32px', padding: '20px 0', borderTop: '1px solid var(--border-1)', borderBottom: '1px solid var(--border-1)', marginBottom: 24 }}>
-              {[['75mg', 'caffeine'], ['5g', 'sugar'], ['35', 'cal'], ['12oz', 'can']].map(([v, l]) => (
+              {[['75mg', 'caffeine'], ['5g', 'sugar'], ['35', 'cal'], ['12oz', 'bottle']].map(([v, l]) => (
                 <div key={l}>
                   <div style={{ font: '700 24px var(--font-mono)', color: 'var(--accent)' }}>{v}</div>
                   <div className="mono-sm" style={{ color: 'var(--fg-3)', fontSize: 10 }}>{l.toUpperCase()}</div>
@@ -323,7 +323,7 @@ function FlagshipPage({ flavor, onAdd }) {
           >
             <div className="card" style={{ maxWidth: 540 }}>
               <h3 className="h3" style={{ marginBottom: 16 }}>Nutrition Facts</h3>
-              <div className="mono-sm" style={{ color: 'var(--fg-3)', paddingBottom: 12, borderBottom: '2px solid var(--fg-1)' }}>SERVING SIZE 1 CAN (12 FL OZ / 355ML)</div>
+              <div className="mono-sm" style={{ color: 'var(--fg-3)', paddingBottom: 12, borderBottom: '2px solid var(--fg-1)' }}>SERVING SIZE 1 BOTTLE (12 FL OZ / 355ML)</div>
               {[['Calories', '35'], ['Total carbs', '8g'], ['Sugars', '5g'], ['Added sugar', '0g'], ['Caffeine', '75mg'], ['L-theanine', '100mg'], ['Sodium', '120mg']].map(([k, v]) => (
                 <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border-1)' }}>
                   <span className="body" style={{ fontSize: 14 }}>{k}</span>
@@ -342,7 +342,7 @@ function FlagshipPage({ flavor, onAdd }) {
               {[
                 { name: 'Kovacs', stars: 5, body: "Switched from Red Bull, never going back. No 4pm wall." },
                 { name: 'Mira L.', stars: 5, body: "Real flavor, not chemical. Plays well with my pre-game routine." },
-                { name: 'Jordan T.', stars: 4, body: "Wish it came in bigger cans for long sessions, but the formula is clean." },
+                { name: 'Jordan T.', stars: 4, body: "Wish it came in bigger bottles for long sessions, but the formula is clean." },
                 { name: 'Sam V.', stars: 5, body: "I'm a streamer. Six hours, no jitter. That's the whole sales pitch." },
               ].map((r, i) => (
                 <div key={i} className="card">
