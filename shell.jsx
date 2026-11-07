@@ -598,7 +598,7 @@ function CartDrawer({ open, items, onClose, onInc, onDec, total }) {
           color: 'var(--fg-3)'
         }}>
           <span aria-hidden="true" className="dot" style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)', flexShrink: 0 }}/>
-          <span>STATUS: {items.length ? 'STOCKED' : 'EMPTY'} · {items.reduce((s, i) => s + i.qty, 0)} CANS QUEUED</span>
+          <span>STATUS: {items.length ? 'STOCKED' : 'EMPTY'} · {items.reduce((s, i) => s + i.qty, 0)} BOTTLES QUEUED</span>
         </div>
 
         <div className="thin-scroll" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
@@ -819,7 +819,7 @@ function Can({ flavor, height = 360 }) {
 // ─────────────────────────────────────────────────────────────
 // Sticky page-bottom CTA bar (Add to fridge)
 // ─────────────────────────────────────────────────────────────
-function PageBottomCTA({ onAdd, label = "Add to fridge", price = "$2.50/can" }) {
+function PageBottomCTA({ onAdd, label = "Add to fridge", price = "$2.50/bottle" }) {
   return (
     <div style={{
       position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)',

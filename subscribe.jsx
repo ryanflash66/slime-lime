@@ -205,7 +205,7 @@ function SubscribePage({ onAdd, onSubscribe }) {
             {/* Step 1: Pack size */}
             <div style={{ marginBottom: 32 }}>
               <div className="mono-sm" style={{ color: 'var(--accent)', marginBottom: 8 }}>STEP 01 · PACK SIZE</div>
-              <div className="h3" style={{ marginBottom: 16 }}>How many cans?</div>
+              <div className="h3" style={{ marginBottom: 16 }}>How many bottles?</div>
               <SubscribeRadioGroup
                 label="Pack size"
                 options={sizes.map(s => ({ value: s }))}
@@ -219,7 +219,7 @@ function SubscribePage({ onAdd, onSubscribe }) {
                 renderOption={(o, checked) => (
                   <>
                     <div style={{ font: '700 26px var(--font-mono)', color: checked ? 'var(--accent)' : 'var(--fg-1)' }}>{o.value}</div>
-                    <div className="mono-sm" style={{ color: 'var(--fg-3)', fontSize: 10 }}>CANS</div>
+                    <div className="mono-sm" style={{ color: 'var(--fg-3)', fontSize: 10 }}>BOTTLES</div>
                   </>
                 )}
               />
@@ -230,7 +230,7 @@ function SubscribePage({ onAdd, onSubscribe }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
                 <div>
                   <div className="mono-sm" style={{ color: 'var(--accent)', marginBottom: 4 }}>STEP 02 · FLAVORS</div>
-                  <div className="h3">Pick {packSize} cans</div>
+                  <div className="h3">Pick {packSize} bottles</div>
                 </div>
                 <div ref={pillRef} className="hud-pill" aria-live="polite" style={{
                   background: isFull ? 'var(--accent-soft)' : 'var(--ink-900)',

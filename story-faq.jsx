@@ -67,7 +67,7 @@ function StoryPage() {
       <section className="section" id="science">
         <div className="container">
           <div className="eyebrow" style={{ marginBottom: 16 }}>// THE SCIENCE</div>
-          <h2 className="display-lg" style={{ marginBottom: 40, maxWidth: 800 }}>What's actually in the can.</h2>
+          <h2 className="display-lg" style={{ marginBottom: 40, maxWidth: 800 }}>What's actually in the bottle.</h2>
           <div style={storyFaqAutoGrid(20, 300)}>
             {[
               { h: 'Clean caffeine', n: '75mg', b: 'Sourced from green coffee. Slow-release. No taurine, no guarana, no synthetic stim stack.' },
@@ -95,7 +95,7 @@ function StoryPage() {
             Six full-time, scattered across Berlin, Austin, and Toronto. One food scientist on retainer. A long list of late-night testers in Discord.
           </p>
           <div style={{ display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
-            {['Late-night ops', 'Clean formulation', 'No VC strings', 'Carbon-neutral cans', 'Recyclable everything'].map(v => (
+            {['Late-night ops', 'Clean formulation', 'No VC strings', 'Carbon-neutral bottles', 'Recyclable everything'].map(v => (
               <span key={v} className="hud-pill" style={{ fontSize: 11 }}>{v}</span>
             ))}
           </div>
@@ -158,8 +158,8 @@ function FAQPage() {
   const groups = [
     { name: 'Product', qs: [
       ['How is Slime Lime different from a regular energy drink?', "Most energy drinks are tuned for shift workers — high sugar, max stim, fast crash. We're tuned for 6-hour focus sessions. 75mg of clean caffeine, 100mg L-theanine, real fruit, six electrolytes."],
-      ['Is there caffeine in every flavor?', "Yes. Every can has the same 75mg dose. We don't make decaf — yet."],
-      ['Where are the cans made?', "Co-packed in Wisconsin and the Netherlands. Aluminum cans (recyclable). Carbon-neutral shipping in the US and EU."],
+      ['Is there caffeine in every flavor?', "Yes. Every bottle has the same 75mg dose. We don't make decaf — yet."],
+      ['Where are the bottles made?', "Co-packed in Wisconsin and the Netherlands. Glass bottles (recyclable). Carbon-neutral shipping in the US and EU."],
       ['Is it vegan / gluten-free?', "Yes to both. No animal products, no gluten, no GMOs. Kosher certified."],
     ]},
     { name: 'Subscription', qs: [
