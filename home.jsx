@@ -26,11 +26,8 @@ function heroUseMedia(query) {
 // Fallback for "Read the science" when no onWatch is passed: same target as the footer's
 // "The science" link (/story#science). The router resets scroll on hashchange, so scroll after it.
 function heroReadScience() {
+  // The route stage scrolls to #science once the Story page is on screen.
   window.location.hash = '/story#science';
-  setTimeout(() => {
-    const el = document.getElementById('science');
-    if (el) el.scrollIntoView({ block: 'start' });
-  }, 60);
 }
 
 const heroSpecs = [
@@ -270,7 +267,7 @@ function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
 
   if (narrow) {
     return (
-      <section data-screen-label="01 Home Hero" style={{ position: 'relative', background: 'var(--ink-800)', overflow: 'hidden' }}>
+      <section data-no-reveal data-screen-label="01 Home Hero" style={{ position: 'relative', background: 'var(--ink-800)', overflow: 'hidden' }}>
         <div style={{
           position: 'relative', height: small ? 'clamp(440px, 64svh, 560px)' : 'clamp(520px, 66svh, 680px)',
           WebkitMaskImage: 'linear-gradient(180deg, #000 78%, transparent)', maskImage: 'linear-gradient(180deg, #000 78%, transparent)',
@@ -290,7 +287,7 @@ function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
   }
 
   return (
-    <section data-screen-label="01 Home Hero" style={{
+    <section data-no-reveal data-screen-label="01 Home Hero" style={{
       position: 'relative', overflow: 'hidden', background: 'var(--ink-800)',
       height: 'max(680px, calc(100svh - 104px))',
     }}>
@@ -541,7 +538,7 @@ function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced })
       </div>
 
       {/* bottle area — selects this flavor's theme */}
-      <button type="button" onClick={onSelect}
+      <button type="button" onClick={onSelect} className="sl-tilt"
         aria-label={`Preview ${flavor.name} theme`}
         style={{
           display: 'block', width: '100%', aspectRatio: '4 / 5', padding: 0, margin: '0 0 18px',
@@ -622,8 +619,42 @@ function ScrollStory() {
   const wide = homeSecUseMedia('(min-width: 900px)');
   const ref = useRefH(null);
   const [progress, setProgress] = useStateH(0);
+  // With GSAP loaded the whole section is one scrubbed ScrollTrigger timeline that writes
+  // straight to the DOM (no React state per scroll frame); the state path is the fallback.
+  const gs = !!window.SLMotion;
+  const barRef = useRefH(null);
+  const imgRefs = useRefH([]);
+  const actRefs = useRefH([]);
   useEffectH(() => {
-    if (reduced) return;
+    if (reduced || !gs) return;
+    const gsap = window.SLMotion.gsap;
+    const n = homeSecStoryActs.length;
+    const ctx = gsap.context(() => {
+      const tl = gsap.timeline({
+        defaults: { ease: 'none' },
+        scrollTrigger: { trigger: ref.current, start: 'top top', end: 'bottom bottom', scrub: 0.6 },
+      });
+      tl.fromTo(barRef.current, { scaleX: 0 }, { scaleX: 1, duration: n }, 0);
+      const peak = wide ? 1 : 0.32;
+      imgRefs.current.forEach((img, i) => {
+        tl.fromTo(img, { scale: 1.1 }, { scale: 1, duration: 1 }, i);
+        if (i > 0) tl.fromTo(img, { opacity: 0 }, { opacity: peak, duration: 0.18 }, i - 0.05);
+        else gsap.set(img, { opacity: peak });
+        if (i < n - 1) tl.to(img, { opacity: 0, duration: 0.18 }, i + 0.87);
+      });
+      actRefs.current.forEach((el, i) => {
+        if (i > 0) {
+          tl.fromTo(el, { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.04 }, i);
+          tl.fromTo(el.children, { y: 44, opacity: 0 }, { y: 0, opacity: 1, duration: 0.2, stagger: 0.05, ease: 'power3.out' }, i);
+        } else gsap.set(el, { autoAlpha: 1 });
+        if (i < n - 1) tl.to(el.children, { y: -36, opacity: 0, duration: 0.14, stagger: 0.03, ease: 'power2.in' }, i + 0.82)
+          .set(el, { autoAlpha: 0 }, i + 1);
+      });
+    }, ref);
+    return () => ctx.revert();
+  }, [reduced, wide, gs]);
+  useEffectH(() => {
+    if (reduced || gs) return;
     let raf = 0;
     const measure = () => {
       raf = 0;
@@ -679,7 +710,7 @@ function ScrollStory() {
   }
 
   return (
-    <section ref={ref} style={{ position: 'relative', height: '300vh' }} data-screen-label="03 Scroll Story">
+    <section ref={ref} data-no-reveal style={{ position: 'relative', height: '300vh' }} data-screen-label="03 Scroll Story">
       <div style={{
         position: 'sticky', top: 0,
         height: '100vh',
@@ -700,13 +731,15 @@ function ScrollStory() {
           {acts.map((a, i) => {
             const local = Math.max(0, Math.min(1, (progress - i / 3) * 3));
             return (
-              <img key={i} src={`assets/scenes/story-act-0${i + 1}-640.webp`}
+              <img key={i} ref={el => { imgRefs.current[i] = el; }} src={`assets/scenes/story-act-0${i + 1}-640.webp`}
                 srcSet={`assets/scenes/story-act-0${i + 1}-640.webp 640w, assets/scenes/story-act-0${i + 1}.webp 1200w`}
                 sizes={wide ? '50vw' : '100vw'} alt="" decoding="async"
                 style={{
                   position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
-                  opacity: actOpacity(i) * (wide ? 1 : 0.32),
-                  transform: `scale(${1.08 - local * 0.08})`,
+                  ...(gs ? { opacity: 0 } : {
+                    opacity: actOpacity(i) * (wide ? 1 : 0.32),
+                    transform: `scale(${1.08 - local * 0.08})`,
+                  }),
                   willChange: 'transform, opacity',
                 }}/>
             );
@@ -718,10 +751,10 @@ function ScrollStory() {
           {/* progress bar */}
           <div aria-hidden="true" style={{ marginBottom: 56 }}>
             <div style={{ position: 'relative', height: 2, background: 'var(--border-1)' }}>
-              <div style={{
+              <div ref={barRef} style={{
                 position: 'absolute', inset: 0,
                 background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)',
-                transform: `scaleX(${progress})`, transformOrigin: 'left center',
+                ...(gs ? { transform: 'scaleX(0)' } : { transform: `scaleX(${progress})` }), transformOrigin: 'left center',
               }}/>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 12, font: '500 11px var(--font-mono)', color: 'var(--fg-3)', letterSpacing: '0.08em' }}>
@@ -737,14 +770,16 @@ function ScrollStory() {
               const visible = actVisible(i);
               const opacity = actOpacity(i);
               return (
-                <div key={i} style={{
+                <div key={i} ref={el => { actRefs.current[i] = el; }} style={{
                   gridArea: '1 / 1',
                   minWidth: 0,
-                  opacity,
-                  transform: `translateY(${visible ? 0 : 20}px)`,
-                  // opacity tracks scroll directly; only the visibility toggle's nudge eases
-                  transition: `transform 240ms ${homeSecEase}`,
-                  pointerEvents: visible ? 'auto' : 'none',
+                  ...(gs ? { visibility: i === 0 ? 'visible' : 'hidden' } : {
+                    opacity,
+                    transform: `translateY(${visible ? 0 : 20}px)`,
+                    // opacity tracks scroll directly; only the visibility toggle's nudge eases
+                    transition: `transform 240ms ${homeSecEase}`,
+                    pointerEvents: visible ? 'auto' : 'none',
+                  }),
                 }}>
                   {homeSecStoryAct(a)}
                 </div>
@@ -821,8 +856,8 @@ function Streamers() {
 function SubscribeBar({ onGo }) {
   return (
     <section className="section" style={{ position: 'relative', overflow: 'hidden' }} data-screen-label="05 Subscribe Pitch">
-      <div style={{
-        position: 'absolute', inset: 0,
+      <div data-parallax="0.3" style={{
+        position: 'absolute', inset: '-15% 0',
         backgroundImage: 'url(assets/scenes/lifestyle-desk.webp)',
         backgroundSize: 'cover', backgroundPosition: 'center',
         opacity: 0.3,
@@ -886,7 +921,10 @@ function HomePage({ flavor, onPickFlavor, onAdd }) {
   const flavors = window.FLAVORS;
   return (
     <>
-      <Hero flavor={flavor} flavors={flavors} onPickFlavor={onPickFlavor} onShop={() => { document.getElementById('shop')?.scrollIntoView({ behavior: 'smooth' }); }}/>
+      <Hero flavor={flavor} flavors={flavors} onPickFlavor={onPickFlavor} onShop={() => {
+        if (window.SLMotion) window.SLMotion.scrollTo('#shop');
+        else document.getElementById('shop')?.scrollIntoView({ behavior: 'smooth' });
+      }}/>
       <LiveTicker/>
       <ProofStrip/>
       <Lineup flavors={flavors} current={flavor} onPick={onPickFlavor} onAdd={onAdd}/>

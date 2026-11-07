@@ -40,6 +40,11 @@
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 
 <script src="slime-display.js" defer></script>
+<!-- GSAP 3.13 (ScrollTrigger + ScrollToPlugin) + Slime Lime motion layer -->
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js" integrity="sha384-HOvlOYPIs/zjoIkWUGXkVmXsjr8GuZLV+Q+rcPwmJOVZVpvTSXQChiN4t9Euv9Vc" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrollTrigger.min.js" integrity="sha384-P8VzCVnT9NBUkMrpcIZrJbA7EBjJvh/fJS6PmP+4nLIM284DtsImIv8D0fFjIkeh" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrollToPlugin.min.js" integrity="sha384-dUEYjN2xd8Wk4WIZYrCpK7Ww7+r/LVtVebVp8skuwm9bKGoVo2bZrWuA79w8TI+v" crossorigin="anonymous"></script>
+<script src="motion.js"></script>
 <script type="module" src="bottle3d.js"></script>
 <script type="text/babel" src="shell.jsx"></script>
 <script type="text/babel" src="home.jsx"></script>
@@ -48,10 +53,13 @@
 <script type="text/babel" src="story-faq.jsx"></script>
 
 <script type="text/babel">
-const { useState: useStateApp, useEffect: useEffectApp } = React;
+const { useState: useStateApp, useEffect: useEffectApp, useRef: useRefApp } = React;
 
 function App() {
-  const route = window.useRoute();
+  const url = window.useRoute();
+  const pageRef = useRefApp(null);
+  // The page on screen lags the URL while the GSAP curtain covers the swap.
+  const route = window.useRouteStage(url, pageRef);
   const cart = window.useCart();
   const [flavor, setFlavor] = useStateApp(window.FLAVORS[0]);
   // The flagship PDP is always Lemon-Lime, whatever flavor is picked on Home.
@@ -66,8 +74,8 @@ function App() {
 
   return (
     <div>
-      <window.Nav cartCount={cart.count} onCart={() => cart.setCartOpen(true)} route={route}/>
-      {page}
+      <window.Nav cartCount={cart.count} onCart={() => cart.setCartOpen(true)} route={url}/>
+      <div ref={pageRef}>{page}</div>
       <window.Footer/>
       <window.CartDrawer
         open={cart.cartOpen}
