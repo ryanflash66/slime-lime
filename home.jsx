@@ -1,12 +1,11 @@
 /* global React */
-// HOME PAGE — Animated reactive hero, lineup w/ flavor recolor, ticker, streamers, story
+// HOME PAGE — 3D product hero, lineup w/ flavor recolor, ticker, streamers, story
 const { useState: useStateH, useEffect: useEffectH, useRef: useRefH, useMemo: useMemoH } = React;
 
 // ─────────────────────────────────────────────────────────────
-// HERO — Reactive: cursor controls slime morph + can rotation, click to drip
+// HERO — full-bleed 3D product stage (bottle3d.js), flavor switcher, spec rail
 // ─────────────────────────────────────────────────────────────
 const heroEase = 'cubic-bezier(0.23, 1, 0.32, 1)';
-const heroInteractive = 'a,button,input,select,textarea,label,[role="button"]';
 
 // Local media-query hook (hero only).
 function heroUseMedia(query) {
@@ -24,15 +23,6 @@ function heroUseMedia(query) {
   return matches;
 }
 
-// Right-hand callouts are clamped so they never run past the container edge.
-const heroPinRight = pct => `min(${pct}, calc(100% - 132px + max(0px, (100vw - 1280px) / 2)))`;
-const heroPins = [
-  { x: '-8%', y: '22%', label: 'CAFFEINE', value: '75mg', sub: 'clean · slow-release' },
-  { x: heroPinRight('86%'), y: '34%', label: 'SUGAR', value: '5g', sub: 'real fruit · low gi' },
-  { x: '-12%', y: '68%', label: 'CRASH', value: '0', sub: 'all session' },
-  { x: heroPinRight('84%'), y: '78%', label: 'VOL', value: '12oz', sub: 'slim can' },
-];
-
 // Fallback for "Read the science" when no onWatch is passed: same target as the footer's
 // "The science" link (/story#science). The router resets scroll on hashchange, so scroll after it.
 function heroReadScience() {
@@ -43,452 +33,242 @@ function heroReadScience() {
   }, 60);
 }
 
-// Hydration readout ticks in its own component so the hero (and its bottle SVG) doesn't re-render.
-function HeroHydration({ paused }) {
-  const [value, setValue] = useStateH(75);
-  useEffectH(() => {
-    if (paused) return;
-    const tick = () => setValue(70 + Math.round(Math.sin(Date.now() / 800) * 5 + 5));
-    tick();
-    const t = setInterval(tick, 1000);
-    return () => clearInterval(t);
-  }, [paused]);
-  return <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{value}%</span>;
-}
+const heroSpecs = [
+  { label: 'Caffeine', value: '75', unit: 'mg', sub: 'Clean · slow-release' },
+  { label: 'Sugar', value: '5', unit: 'g', sub: 'Real fruit · low GI' },
+  { label: 'Crash', value: '0', unit: '', sub: 'All session' },
+  { label: 'Volume', value: '12', unit: 'oz', sub: 'Per serving' },
+];
 
-// Click splash: expands and fades out (transform/opacity); keeps the slime morph for character.
-function HeroDrip({ x, y, color, reduced }) {
-  const ref = useRefH(null);
+const heroWord = f => (f.short || f.name).replace(/[-·]/g, ' ').replace(/\s+/g, ' ').trim();
+const hero3DOpts = f => ({
+  id: f.id, juice: f.color, accent: f.accent, flavor: f.name, subtitle: f.sub || 'Clean focus',
+  stats: '75MG · 5G SUGAR · 12FL OZ', word: heroWord(f),
+  bg: `assets/scenes/bg-${f.id}-${window.innerWidth < 900 ? 'tall' : 'wide'}.webp`,
+});
+
+// The WebGL stage. Falls back to the SVG bottle until bottle3d.js loads, or if WebGL is unavailable.
+function HeroStage({ flavor, frame, fallbackH }) {
+  const hostRef = useRefH(null);
+  const instRef = useRefH(null);
+  const [ready, setReady] = useStateH(false);
+  const [failed, setFailed] = useStateH(false);
+
   useEffectH(() => {
-    const el = ref.current;
-    if (!el || typeof el.animate !== 'function') return;
-    el.animate(
-      reduced
-        ? [{ opacity: 1 }, { opacity: 0 }]
-        : [{ opacity: 1, transform: 'scale(0.6)' }, { opacity: 0, transform: 'scale(1.15)' }],
-      { duration: reduced ? 400 : 1200, easing: heroEase, fill: 'forwards' }
-    );
+    let cancelled = false;
+    const mount = () => {
+      if (cancelled || instRef.current || !hostRef.current) return;
+      if (!window.SL3D || !window.SL3D.supported) { setFailed(true); return; }
+      try {
+        instRef.current = window.SL3D.create(hostRef.current, { ...hero3DOpts(flavor), frame });
+        Promise.resolve(instRef.current.whenReady).then(() =>
+          requestAnimationFrame(() => requestAnimationFrame(() => { if (!cancelled) setReady(true); })));
+      } catch (err) {
+        setFailed(true);
+      }
+    };
+    if (window.SL3D) mount(); else window.addEventListener('sl3d-ready', mount, { once: true });
+    const giveUp = setTimeout(() => { if (!instRef.current) setFailed(true); }, 8000);
+    return () => {
+      cancelled = true;
+      clearTimeout(giveUp);
+      window.removeEventListener('sl3d-ready', mount);
+      if (instRef.current) { instRef.current.destroy(); instRef.current = null; }
+    };
   }, []);
+
+  useEffectH(() => { if (instRef.current) instRef.current.setFlavor(hero3DOpts(flavor)); }, [flavor.id]);
+  useEffectH(() => { if (instRef.current) instRef.current.setFrame(frame); }, [frame.x, frame.y, frame.fill]);
+
+  const showFallback = !ready;
   return (
-    <div ref={ref} data-hero-drip="" aria-hidden="true" style={{
-      position: 'absolute',
-      left: x - 60, top: y - 60,
-      width: 120, height: 120,
-      borderRadius: '50%',
-      background: `radial-gradient(circle, ${color}88, transparent 60%)`,
-      animation: reduced ? 'none' : 'slime-morph 1.4s ease-out forwards',
-      pointerEvents: 'none',
-      zIndex: 2,
-    }}/>
+    <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'var(--ink-800)' }}>
+      <div ref={hostRef} style={{
+        position: 'absolute', inset: 0,
+        opacity: ready ? 1 : 0,
+        transition: `opacity 600ms ${heroEase}`,
+      }}/>
+      {showFallback && (
+        <div style={{
+          position: 'absolute', inset: 0,
+          background: `radial-gradient(40% 55% at ${50 + frame.x * 50}% 62%, ${flavor.color}38 0%, transparent 70%)`,
+          display: 'flex', alignItems: 'center',
+          justifyContent: 'center',
+          paddingLeft: `${Math.max(0, frame.x) * 100}%`,
+          paddingRight: `${Math.max(0, -frame.x) * 100}%`,
+          opacity: failed ? 1 : 0.9,
+        }}>
+          {/* Still render: bottle is 70% of the image height, base at 90%. */}
+          <img src={`assets/bottle/renders/hero-${flavor.id}.webp`} alt="" width={1000} height={1200}
+            decoding="async" fetchpriority="high"
+            style={{ height: fallbackH, width: 'auto', transform: 'rotate(-3deg)',
+              filter: `drop-shadow(0 30px 60px ${flavor.color}55)` }}/>
+        </div>
+      )}
+    </div>
   );
 }
 
-function Hero({ flavor, onShop, onWatch }) {
-  const ref = useRefH(null);
-  const gridRef = useRefH(null);
-  const eyebrowRef = useRefH(null);
-  const h1Ref = useRefH(null);
-  const bodyRef = useRefH(null);
-  const ctaRef = useRefH(null);
-  const metricsRef = useRefH(null);
-  const bottleRef = useRefH(null);
-  const underlineRef = useRefH(null);
-  const readXRef = useRefH(null);
-  const readYRef = useRefH(null);
-  const dripSeq = useRefH(0);
-  const dripTimers = useRefH(new Set());
+function HeroSwitcher({ flavors, current, onPick, align = 'center' }) {
+  const i = Math.max(0, flavors.findIndex(f => f.id === current.id));
+  const go = d => onPick(flavors[(i + d + flavors.length) % flavors.length]);
+  const pad = n => String(n).padStart(2, '0');
+  return (
+    <div role="group" aria-label="Choose a flavor" style={{
+      display: 'flex', flexDirection: 'column', alignItems: align, gap: 12,
+    }}>
+      <div className="mono-sm" aria-live="polite" style={{ color: 'var(--fg-2)', letterSpacing: '0.14em', whiteSpace: 'nowrap' }}>
+        <span style={{ color: 'var(--accent)' }}>{pad(i + 1)}</span> / {pad(flavors.length)} — {current.name.toUpperCase()}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <button type="button" className="hero-arrow" aria-label="Previous flavor" onClick={() => go(-1)}><Icon name="arrowL" size={16}/></button>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {flavors.map(f => {
+            const on = f.id === current.id;
+            return (
+              <button key={f.id} type="button" className="hero-dot" aria-label={`Show ${f.name}`} aria-pressed={on}
+                onClick={() => onPick(f)} style={{ '--dot': f.color }}>
+                <span style={{ width: on ? 28 : 10, background: on ? f.color : 'transparent', borderColor: f.color }}/>
+              </button>
+            );
+          })}
+        </div>
+        <button type="button" className="hero-arrow" aria-label="Next flavor" onClick={() => go(1)}><Icon name="arrowR" size={16}/></button>
+      </div>
+    </div>
+  );
+}
 
-  const finePointer = heroUseMedia('(hover: hover) and (pointer: fine)');
+function HeroSpecRail({ grid = false }) {
+  return (
+    <dl style={grid ? {
+      display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 130px), 1fr))', gap: 1,
+      margin: 0, background: 'var(--border-1, rgba(250,252,239,0.08))', borderRadius: 12, overflow: 'hidden',
+    } : { display: 'flex', flexDirection: 'column', gap: 26, margin: 0, alignItems: 'flex-end' }}>
+      {heroSpecs.map(s => (
+        <div key={s.label} style={grid
+          ? { background: 'var(--ink-800)', padding: '14px 16px' }
+          : { display: 'grid', gridTemplateColumns: '44px auto', alignItems: 'center', columnGap: 14, textAlign: 'right' }}>
+          {!grid && <span aria-hidden="true" style={{ height: 1, background: 'linear-gradient(90deg, transparent, var(--accent))', opacity: 0.7 }}/>}
+          <div>
+            <dt className="mono-sm" style={{ color: 'var(--fg-3)', fontSize: 10, letterSpacing: '0.16em', textTransform: 'uppercase' }}>{s.label}</dt>
+            <dd style={{ margin: '4px 0 0', font: '700 30px/1 var(--font-mono)', color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums' }}>
+              {s.value}<span style={{ fontSize: 14, color: 'var(--accent)', marginLeft: 2 }}>{s.unit}</span>
+            </dd>
+            <dd className="mono-sm" style={{ margin: '6px 0 0', color: 'var(--fg-4)', fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase' }}>{s.sub}</dd>
+          </div>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
+  const copyRef = useRefH(null);
   const reduced = heroUseMedia('(prefers-reduced-motion: reduce)');
-  // One-column layout. The grid below is forced to a single column under the same query, so callout
-  // placement and grid stacking can't disagree (auto-fit alone would collapse at a scrollbar-dependent ~960px).
   const narrow = heroUseMedia('(max-width: 979px)');
   const small = heroUseMedia('(max-width: 600px)');
+  const list = flavors || window.FLAVORS;
+  const pick = onPickFlavor || (() => {});
 
-  const [active, setActive] = useStateH(false); // pointer over the hero, not over a control
-  const [drips, setDrips] = useStateH([]);
-  const [offscreen, setOffscreen] = useStateH(false);
-
-  // Cursor tracking: write --mx/--my (0–1) on the section once per frame; no React state per move.
-  // --mx-px/--my-px let the 64px reticle move by transform without a hero-sized blend layer.
-  useEffectH(() => {
-    const el = ref.current;
-    if (!el || !finePointer) return;
-    let raf = 0, px = 0.5, py = 0.5, w = 0, h = 0, shown = false;
-    const pad = n => String(n).padStart(4, '0');
-    const flush = () => {
-      raf = 0;
-      el.style.setProperty('--mx', px.toFixed(4));
-      el.style.setProperty('--my', py.toFixed(4));
-      el.style.setProperty('--mx-px', (px * w).toFixed(1) + 'px');
-      el.style.setProperty('--my-px', (py * h).toFixed(1) + 'px');
-      if (readXRef.current) readXRef.current.textContent = 'X:' + pad(Math.round(px * 1920));
-      if (readYRef.current) readYRef.current.textContent = 'Y:' + pad(Math.round(py * 1080));
-    };
-    const onMove = e => {
-      const rect = el.getBoundingClientRect();
-      w = rect.width; h = rect.height;
-      px = Math.min(1, Math.max(0, (e.clientX - rect.left) / w));
-      py = Math.min(1, Math.max(0, (e.clientY - rect.top) / h));
-      const show = !(e.target instanceof Element && e.target.closest(heroInteractive));
-      if (show !== shown) {
-        if (show) { cancelAnimationFrame(raf); flush(); } // place the reticle before it fades in
-        shown = show;
-        setActive(show);
-      }
-      if (!raf) raf = requestAnimationFrame(flush);
-    };
-    const onLeave = () => { shown = false; setActive(false); };
-    el.addEventListener('mousemove', onMove, { passive: true });
-    el.addEventListener('mouseleave', onLeave);
-    return () => {
-      cancelAnimationFrame(raf);
-      el.removeEventListener('mousemove', onMove);
-      el.removeEventListener('mouseleave', onLeave);
-      setActive(false); // keep React state in sync with the reset local `shown`
-    };
-  }, [finePointer]);
-
-  // Pause ambient loops while the hero is offscreen.
-  useEffectH(() => {
-    const el = ref.current;
-    if (!el || !('IntersectionObserver' in window)) return;
-    const io = new IntersectionObserver(([entry]) => setOffscreen(!entry.isIntersecting));
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
-  useEffectH(() => {
-    const svg = underlineRef.current;
-    if (!svg || typeof svg.pauseAnimations !== 'function') return;
-    if (offscreen) svg.pauseAnimations(); else svg.unpauseAnimations();
-  }, [offscreen]);
-
-  // First-load entrance, once per session. Fill 'backwards' only, so nothing lingers or blocks clicks.
-  // Layout effect so the first keyframe applies before paint (React.useLayoutEffect is used directly to
-  // keep the shared hook-alias line at the top of this file untouched).
+  // First-load entrance, once per session; fill 'backwards' so nothing lingers or blocks clicks.
   React.useLayoutEffect(() => {
     let seen = false;
     try {
       seen = sessionStorage.getItem('sl-hero-seen') === '1';
       sessionStorage.setItem('sl-hero-seen', '1');
     } catch (err) { /* storage unavailable: just play it */ }
-    if (seen) return;
-    const run = (el, keyframes, opts) => {
-      if (el && typeof el.animate === 'function') el.animate(keyframes, { fill: 'backwards', ...opts });
-    };
-    if (reduced) {
-      run(gridRef.current, [{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'linear' });
-      return;
-    }
-    [eyebrowRef, h1Ref, bodyRef, ctaRef, metricsRef].forEach((r, i) => run(r.current,
-      [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'translateY(0)' }],
-      { duration: 500, delay: i * 60, easing: heroEase }));
-    run(bottleRef.current,
-      [{ opacity: 0, transform: 'scale(0.96)' }, { opacity: 1, transform: 'scale(1)' }],
-      { duration: 600, delay: 120, easing: heroEase });
+    const el = copyRef.current;
+    if (seen || !el) return;
+    const kids = Array.from(el.children);
+    kids.forEach((k, i) => {
+      if (typeof k.animate !== 'function') return;
+      k.animate(reduced
+        ? [{ opacity: 0 }, { opacity: 1 }]
+        : [{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'translateY(0)' }],
+        { duration: reduced ? 200 : 600, delay: reduced ? 0 : 120 + i * 70, easing: heroEase, fill: 'backwards' });
+    });
   }, []);
 
-  useEffectH(() => {
-    const timers = dripTimers.current;
-    return () => timers.forEach(clearTimeout);
-  }, []);
+  const frame = narrow ? { x: 0, y: 0.02, fill: 0.9 } : { x: 0.3, y: -0.02, fill: 0.84 };
+  const ctaFlex = small ? { flex: '1 1 auto', justifyContent: 'center' } : null;
 
-  const handleClick = e => {
-    if (e.target instanceof Element && e.target.closest(heroInteractive)) return;
-    const rect = ref.current.getBoundingClientRect();
-    const id = ++dripSeq.current;
-    setDrips(d => [...d, { id, x: e.clientX - rect.left, y: e.clientY - rect.top }]);
-    const t = setTimeout(() => {
-      dripTimers.current.delete(t);
-      setDrips(d => d.filter(x => x.id !== id));
-    }, reduced ? 450 : 1300);
-    dripTimers.current.add(t);
-  };
+  const copy = (
+    <div ref={copyRef} style={{ position: 'relative', maxWidth: 600, minWidth: 0 }}>
+      <div className="eyebrow" style={{ marginBottom: 22 }}>Functional hydration · built for gamers</div>
+      <h1 className="hero-title">
+        Late nights deserve <span style={{ color: 'var(--accent)' }}>better fuel.</span>
+      </h1>
+      <p className="body-lg" style={{ maxWidth: 460, margin: '26px 0 34px', color: 'var(--fg-2)' }}>
+        5g sugar. 75mg clean caffeine. Zero crash. Real electrolytes. Built for the long session.
+      </p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 36 }}>
+        <button onClick={onShop} className="btn btn-primary btn-xl" style={{ whiteSpace: 'nowrap', ...ctaFlex }}>
+          Shop the lineup <Icon name="arrow" size={18}/>
+        </button>
+        <button onClick={onWatch || heroReadScience} className="btn btn-secondary btn-xl" style={{ whiteSpace: 'nowrap', ...ctaFlex }}>
+          <Icon name="bolt" size={16}/> Read the science
+        </button>
+      </div>
+      <div style={{ display: 'flex', columnGap: small ? 20 : 28, rowGap: 8, flexWrap: 'wrap' }}>
+        <span className="mono-sm" style={{ color: 'var(--fg-2)' }}><span style={{ color: 'var(--accent)' }}>★ 4.8</span> · 12,400 reviews</span>
+        <span className="mono-sm" style={{ color: 'var(--fg-3)' }}>Free shipping $40+</span>
+        <span className="mono-sm" style={{ color: 'var(--fg-3)' }}>Ships in 24h</span>
+      </div>
+    </div>
+  );
 
-  const play = offscreen ? 'paused' : 'running';
-  const showReticle = finePointer && active;
-  const follow = finePointer && !reduced; // blob + bottle respond to the cursor
-  const bottleH = small ? 400 : narrow ? 480 : 580;
-  const stageH = narrow ? bottleH + 40 : 600;
-  const ringSize = Math.round(bottleH * 0.93);
-  const puddleSize = Math.round(bottleH * 0.8);
-  const pillStyle = small ? { fontSize: 9, padding: '5px 8px', whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' };
-  // Memoized so hover/drip re-renders don't rebuild the bottle SVG.
-  const canEl = useMemoH(() => <Can flavor={flavor} height={bottleH}/>, [flavor, bottleH]);
-  const followTransform = 'translate3d(calc((var(--mx, 0.5) - 0.5) * 100%), calc((var(--my, 0.5) - 0.5) * 100%), 0)';
+  if (narrow) {
+    return (
+      <section data-screen-label="01 Home Hero" style={{ position: 'relative', background: 'var(--ink-800)', overflow: 'hidden' }}>
+        <div style={{
+          position: 'relative', height: small ? 'clamp(440px, 64svh, 560px)' : 'clamp(520px, 66svh, 680px)',
+          WebkitMaskImage: 'linear-gradient(180deg, #000 78%, transparent)', maskImage: 'linear-gradient(180deg, #000 78%, transparent)',
+        }}>
+          <HeroStage flavor={flavor} frame={frame} fallbackH={small ? 380 : 460}/>
+          <div className="hud-frame-corners" style={{ inset: small ? '16px 12px 40px' : '20px 20px 48px' }}/>
+        </div>
+        <div className="container" style={{ position: 'relative', marginTop: -36, display: 'flex', justifyContent: 'center' }}>
+          <HeroSwitcher flavors={list} current={flavor} onPick={pick}/>
+        </div>
+        <div className="container" style={{ position: 'relative', paddingTop: 40, paddingBottom: 56, display: 'grid', gap: 36 }}>
+          {copy}
+          <HeroSpecRail grid/>
+        </div>
+      </section>
+    );
+  }
 
   return (
-    <section ref={ref} onClick={handleClick} data-offscreen={offscreen ? 'true' : 'false'} style={{
-      position: 'relative',
-      minHeight: '100vh',
-      overflow: 'hidden',
-      paddingTop: 60,
-      cursor: showReticle ? 'none' : undefined,
-    }} data-screen-label="01 Home Hero">
-      {/* layered background */}
-      <div className="hero-bg"/>
-
-      {/* Video-game targeting reticle following cursor (fine pointers only) */}
-      {finePointer && (
-        <div data-hero-reticle="" aria-hidden="true" style={{
-          position: 'absolute', left: 0, top: 0,
-          width: 64, height: 64,
-          pointerEvents: 'none',
-          zIndex: 20,
-          mixBlendMode: 'screen',
-          transform: 'translate3d(calc(var(--mx-px, 50vw) - 32px), calc(var(--my-px, 50vh) - 32px), 0)',
-          opacity: showReticle ? 1 : 0,
-          transition: `opacity 150ms ${heroEase}`,
-        }}>
-          <svg viewBox="0 0 64 64" width="64" height="64" style={{ filter: `drop-shadow(0 0 6px ${flavor.color})` }}>
-            {/* Outer rotating ring */}
-            <g style={{
-              transformOrigin: '32px 32px',
-              animation: reduced ? 'none' : `slime-rotate 6s linear infinite ${showReticle ? 'running' : 'paused'}`,
-            }}>
-              <circle cx="32" cy="32" r="26" fill="none" stroke={flavor.color} strokeWidth="1" strokeDasharray="3 3" opacity="0.6"/>
-            </g>
-            {/* Inner ring */}
-            <circle cx="32" cy="32" r="18" fill="none" stroke={flavor.color} strokeWidth="1.5"/>
-            {/* Corner brackets */}
-            <path d="M 8 14 L 8 8 L 14 8" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
-            <path d="M 50 8 L 56 8 L 56 14" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
-            <path d="M 56 50 L 56 56 L 50 56" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
-            <path d="M 14 56 L 8 56 L 8 50" stroke={flavor.color} strokeWidth="2" fill="none" strokeLinecap="square"/>
-            {/* Crosshair lines (with gap in center) */}
-            <line x1="32" y1="0" x2="32" y2="22" stroke={flavor.color} strokeWidth="1.5"/>
-            <line x1="32" y1="42" x2="32" y2="64" stroke={flavor.color} strokeWidth="1.5"/>
-            <line x1="0" y1="32" x2="22" y2="32" stroke={flavor.color} strokeWidth="1.5"/>
-            <line x1="42" y1="32" x2="64" y2="32" stroke={flavor.color} strokeWidth="1.5"/>
-            {/* Center dot */}
-            <circle cx="32" cy="32" r="2" fill={flavor.color}/>
-            {/* Pulse ring */}
-            <circle cx="32" cy="32" r="14" fill="none" stroke={flavor.color} strokeWidth="1" opacity="0.5">
-              {showReticle && !reduced && <animate attributeName="r" values="14;28;14" dur="1.6s" repeatCount="indefinite"/>}
-              {showReticle && !reduced && <animate attributeName="opacity" values="0.6;0;0.6" dur="1.6s" repeatCount="indefinite"/>}
-            </circle>
-          </svg>
-          {/* HUD readout next to reticle (updated via refs, not state) */}
-          <div style={{
-            position: 'absolute',
-            top: 36, left: 40,
-            font: '600 9px var(--font-mono)',
-            color: flavor.color,
-            letterSpacing: '0.1em',
-            textShadow: `0 0 6px ${flavor.color}`,
-            whiteSpace: 'nowrap',
-          }}>
-            <div ref={readXRef} data-hero-readout-x="">X:0960</div>
-            <div ref={readYRef}>Y:0540</div>
-            <div style={{ marginTop: 2 }}>● LOCK</div>
-          </div>
-        </div>
-      )}
-
-      {/* moving liquid blob that follows cursor */}
+    <section data-screen-label="01 Home Hero" style={{
+      position: 'relative', overflow: 'hidden', background: 'var(--ink-800)',
+      height: 'max(680px, calc(100svh - 104px))',
+    }}>
+      <HeroStage flavor={flavor} frame={frame} fallbackH={560}/>
+      {/* legibility scrim behind the copy */}
       <div aria-hidden="true" style={{
-        position: 'absolute', inset: 0,
-        pointerEvents: 'none',
-        transform: follow ? followTransform : 'none',
-        transition: 'transform 600ms cubic-bezier(0.22, 1, 0.36, 1)',
-      }}>
-        <div className="liquid-blob" style={{
-          left: 'calc(50% - 300px)',
-          top: 'calc(50% - 300px)',
-          background: `radial-gradient(circle, ${flavor.color} 0%, transparent 60%)`,
-          animationPlayState: play,
-        }}/>
-      </div>
+        position: 'absolute', inset: 0, pointerEvents: 'none',
+        background: 'linear-gradient(90deg, rgba(6,13,8,0.92) 0%, rgba(6,13,8,0.6) 30%, rgba(6,13,8,0) 52%)',
+      }}/>
+      <div className="hud-frame-corners" style={{ inset: '24px 32px' }}/>
 
-      {/* slime drip splashes on click */}
-      {drips.map(d => <HeroDrip key={d.id} x={d.x} y={d.y} color={flavor.color} reduced={reduced}/>)}
-
-      {/* HUD overlays — top-left + top-right */}
       <div className="container" style={{
-        position: 'absolute', top: 32, left: 0, right: 0,
-        display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8,
-        zIndex: 5, pointerEvents: 'none',
+        position: 'relative', height: '100%', display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center', gap: 32,
       }}>
-        <div className="hud-pill" style={pillStyle}><span className="dot" style={{ animationPlayState: play }}/>SESSION ACTIVE · 03:42:18</div>
-        <div className="hud-pill" style={{ ...pillStyle, pointerEvents: 'auto' }}>
-          HYDRATION: <HeroHydration paused={offscreen}/>
-        </div>
+        {copy}
+        <HeroSpecRail/>
       </div>
 
-      {/* HUD bottom-left + corner brackets */}
-      <div className="hud-frame-corners" style={{ inset: small ? '64px 10px' : narrow ? '72px 16px' : '80px 32px' }}/>
-
-      {/* main grid */}
-      <div ref={gridRef} className="container" style={{
-        position: 'relative', zIndex: 3,
-        minHeight: narrow ? 0 : 'calc(100vh - 60px)',
-        display: 'grid',
-        gridTemplateColumns: narrow ? 'minmax(0, 1fr)' : 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))',
-        gap: narrow ? 40 : 48,
-        alignItems: 'center',
-        paddingTop: small ? 64 : 80,
-        paddingBottom: small ? 88 : narrow ? 96 : 80,
-      }}>
-        {/* Left — copy */}
-        <div style={{ position: 'relative', minWidth: 0 }}>
-          <div ref={eyebrowRef} className="eyebrow" style={{ marginBottom: 24 }}>FUNCTIONAL HYDRATION · BUILT FOR GAMERS</div>
-          <h1 ref={h1Ref} className="display-xl" style={{ marginBottom: 24 }}>
-            Late nights<br/>
-            deserve<br/>
-            <span style={{
-              color: 'var(--accent)',
-              position: 'relative',
-              display: 'inline-block',
-              filter: `drop-shadow(0 0 24px var(--accent-glow))`,
-            }}>
-              better fuel.
-              {/* dripping underline */}
-              <svg ref={underlineRef} viewBox="0 0 600 80" aria-hidden="true" style={{
-                position: 'absolute', bottom: -36, left: 0, width: '100%', height: 60, pointerEvents: 'none'
-              }}>
-                <path d="M 0 10 Q 100 20 200 10 T 400 10 T 600 10" stroke="var(--accent)" strokeWidth="3" fill="none" opacity="0.7"/>
-                {[80, 200, 320, 480].map((cx, i) => (
-                  <circle key={i} cx={cx} cy="10" r="3" fill="var(--accent)">
-                    {!reduced && <animate attributeName="cy" values={`10;${30 + i * 8};10`} dur={`${2 + i * 0.4}s`} repeatCount="indefinite"/>}
-                    {!reduced && <animate attributeName="r" values="3;5;3" dur={`${2 + i * 0.4}s`} repeatCount="indefinite"/>}
-                  </circle>
-                ))}
-              </svg>
-            </span>
-          </h1>
-          <p ref={bodyRef} className="body-lg" style={{ maxWidth: 480, marginBottom: 36, marginTop: 32 }}>
-            5g sugar. 75mg clean caffeine. Zero crash. Real electrolytes.<br/>
-            The lemon-lime drink built for the long session.
-          </p>
-          <div ref={ctaRef} style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 48 }}>
-            <button onClick={onShop} className="btn btn-primary btn-xl" style={{ whiteSpace: 'nowrap', ...(small ? { flex: '1 1 auto', justifyContent: 'center' } : null) }}>
-              Shop the lineup <Icon name="arrow" size={18}/>
-            </button>
-            <button onClick={onWatch || heroReadScience} className="btn btn-secondary btn-xl" style={{ whiteSpace: 'nowrap', ...(small ? { flex: '1 1 auto', justifyContent: 'center' } : null) }}>
-              <Icon name="bolt" size={16}/> Read the science
-            </button>
-          </div>
-          {/* Inline metrics */}
-          <div ref={metricsRef} style={{ display: 'flex', columnGap: small ? 20 : 32, rowGap: 8, color: 'var(--fg-3)', flexWrap: 'wrap' }}>
-            <span className="mono-sm" style={{ color: 'var(--fg-2)' }}>
-              <span style={{ color: 'var(--accent)' }}>★ 4.8</span> · 12,400 REVIEWS
-            </span>
-            <span className="mono-sm">FREE SHIPPING $40+</span>
-            <span className="mono-sm">SHIPS IN 24H</span>
-          </div>
-        </div>
-
-        {/* Right — Animated, reactive bottle */}
-        <div style={{ position: 'relative', minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24 }}>
-          <div style={{ position: 'relative', width: '100%', height: stageH, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-            {/* Slime puddle behind */}
-            <div aria-hidden="true" style={{
-              position: 'absolute', width: puddleSize, height: puddleSize,
-              background: `radial-gradient(circle, ${flavor.color}55 0%, transparent 65%)`,
-              filter: 'blur(40px)',
-              animation: reduced ? 'none' : `slime-morph 8s ease-in-out infinite ${play}`,
-            }}/>
-
-            {/* Ring readout */}
-            <svg viewBox="0 0 500 500" aria-hidden="true" style={{
-              position: 'absolute', width: ringSize, height: ringSize,
-              animation: reduced ? 'none' : `slime-rotate 80s linear infinite ${play}`,
-              opacity: 0.4,
-            }}>
-              <circle cx="250" cy="250" r="240" fill="none" stroke={flavor.color} strokeWidth="0.5" strokeDasharray="2 6"/>
-              <circle cx="250" cy="250" r="220" fill="none" stroke={flavor.color} strokeWidth="0.5" strokeDasharray="1 12"/>
-              <text x="250" y="20" textAnchor="middle" fontSize="9" fill={flavor.color} letterSpacing="3" style={{ fontFamily: 'var(--font-mono)' }}>
-                CLEAN · CAFFEINE · ELECTROLYTES · NO CRASH · CLEAN · CAFFEINE · ELECTROLYTES · NO CRASH ·
-              </text>
-            </svg>
-
-            {/* Drip drops behind bottle (skipped under reduced motion) */}
-            {!reduced && [0, 1, 2, 3].map(i => (
-              <div key={i} aria-hidden="true" style={{
-                position: 'absolute',
-                top: -40, left: `${30 + i * 12}%`,
-                width: 8, height: 12,
-                background: flavor.color,
-                borderRadius: '50% 50% 50% 50% / 60% 60% 40% 40%',
-                animation: `drip ${3 + i * 0.6}s ${i * 0.4}s infinite ${play}`,
-                filter: `drop-shadow(0 0 6px ${flavor.color})`,
-                opacity: 0.7,
-              }}/>
-            ))}
-
-            {/* The bottle itself, reactive. Outer wrapper owns the entrance; inner owns tilt/lift. */}
-            <div ref={bottleRef} data-hero-bottle="" style={{ position: 'relative' }}>
-              <div style={{
-                position: 'relative',
-                transform: follow
-                  ? 'rotateY(calc((var(--mx, 0.5) - 0.5) * 8deg)) translateY(calc((var(--my, 0.5) - 0.5) * -10px))'
-                  : 'none',
-                transition: `transform 240ms ${heroEase}`,
-                transformStyle: 'preserve-3d',
-                filter: `drop-shadow(0 30px 60px ${flavor.color}55)`,
-              }}>
-                {canEl}
-              </div>
-            </div>
-
-            {/* Stat callouts pinned around the bottle (wide layouts) */}
-            {!narrow && (
-              <div style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, margin: '0 auto', width: 'min(100%, 580px)' }}>
-                {heroPins.map(p => <CalloutPin key={p.label} {...p}/>)}
-              </div>
-            )}
-          </div>
-
-          {/* Stat callouts as a 2×2 grid under the bottle (narrow layouts) */}
-          {narrow && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12, width: '100%', maxWidth: 480 }}>
-              {heroPins.map(p => <CalloutPin key={p.label} {...p} stacked/>)}
-            </div>
-          )}
-        </div>
+      {/* flavor switcher, centred under the bottle */}
+      <div style={{ position: 'absolute', bottom: 34, left: `${50 + frame.x * 50}%`, transform: 'translateX(-50%)' }}>
+        <HeroSwitcher flavors={list} current={flavor} onPick={pick}/>
       </div>
 
-      {/* Bottom HUD: scroll cue */}
-      <div className="container" style={{
-        position: 'absolute', bottom: 24, left: 0, right: 0,
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8,
-        zIndex: 5,
-      }}>
-        <span className="mono-sm" style={{ color: 'var(--fg-3)', ...(small ? { fontSize: 10 } : null) }}>
-          {finePointer ? '// CLICK ANYWHERE TO DRIP' : '// TAP ANYWHERE TO DRIP'}
-        </span>
-        <span className="mono-sm" style={{ color: 'var(--fg-3)', ...(small ? { fontSize: 10 } : null) }}>SCROLL FOR LINEUP <Icon name="arrowDown" size={12}/></span>
+      <div className="container" style={{ position: 'absolute', bottom: 40, left: 0, right: 0, pointerEvents: 'none' }}>
+        <span className="mono-sm" style={{ color: 'var(--fg-4)' }}>Scroll for lineup <Icon name="arrowDown" size={12}/></span>
       </div>
     </section>
-  );
-}
-
-function CalloutPin({ x, y, label, value, sub, stacked = false }) {
-  return (
-    <div data-hero-pin="" style={{
-      position: stacked ? 'relative' : 'absolute',
-      left: stacked ? undefined : x,
-      top: stacked ? undefined : y,
-      background: 'rgba(6, 13, 8, 0.85)',
-      backdropFilter: 'blur(8px)',
-      border: '1px solid var(--accent)',
-      borderRadius: 12,
-      padding: '10px 14px',
-      minWidth: stacked ? 0 : 140,
-      boxShadow: '0 0 16px var(--accent-soft)',
-      zIndex: 4,
-    }}>
-      <div className="mono-sm" style={{ color: 'var(--fg-3)', fontSize: 9 }}>{label}</div>
-      <div style={{ font: '700 22px/1 var(--font-mono)', color: 'var(--accent)', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>{value}</div>
-      <div className="mono-sm" style={{ color: 'var(--fg-4)', fontSize: 9, marginTop: 4 }}>{sub}</div>
-      <span style={{
-        position: 'absolute', top: -3, right: -3,
-        width: 6, height: 6,
-        background: 'var(--accent)',
-        borderRadius: 999,
-        boxShadow: '0 0 8px var(--accent-glow)',
-      }}/>
-    </div>
   );
 }
 
@@ -709,36 +489,25 @@ function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced })
         <span className="mono-sm" style={{ color: 'var(--fg-4)', fontSize: 10 }}>SL-{flavor.id.slice(0,3).toUpperCase()}</span>
       </div>
 
-      {/* glow */}
-      <div aria-hidden="true" style={{
-        position: 'absolute',
-        top: '50%', left: '50%',
-        width: 280, height: 280,
-        transform: 'translate(-50%, -50%)',
-        background: `radial-gradient(circle, ${flavor.color}55, transparent 60%)`,
-        filter: 'blur(30px)',
-        opacity: hover ? 1 : 0.5,
-        transition: `opacity 280ms ${homeSecEase}`,
-        pointerEvents: 'none',
-      }}/>
-
       {/* bottle area — selects this flavor's theme */}
       <button type="button" onClick={onSelect}
         aria-label={`Preview ${flavor.name} theme`}
         style={{
-          display: 'flex', justifyContent: 'center', alignItems: 'center',
-          width: '100%', height: 320, padding: 0, margin: '0 0 16px',
-          background: 'transparent', border: 0, borderRadius: 12,
+          display: 'block', width: '100%', aspectRatio: '4 / 5', padding: 0, margin: '0 0 18px',
+          background: 'var(--ink-900)', border: 0, borderRadius: 12, overflow: 'hidden',
           color: 'inherit', cursor: 'pointer',
           position: 'relative',
         }}>
-        <span style={{
-          display: 'flex', justifyContent: 'center', alignItems: 'center',
-          transform: lift ? 'translateY(-8px) rotate(-3deg)' : 'none',
-          transition: 'transform 380ms var(--ease-slime)',
-        }}>
-          <Can flavor={flavor} height={300}/>
-        </span>
+        <img src={`assets/scenes/splash-${flavor.id}-640.webp`}
+          srcSet={`assets/scenes/splash-${flavor.id}-640.webp 640w, assets/scenes/splash-${flavor.id}.webp 1200w`}
+          sizes="(max-width: 700px) 92vw, 420px"
+          width={640} height={800} loading="lazy" decoding="async"
+          alt=""
+          style={{
+            display: 'block', width: '100%', height: '100%', objectFit: 'cover',
+            transform: lift ? 'scale(1.04)' : 'none',
+            transition: `transform 600ms ${homeSecEase}`,
+          }}/>
       </button>
 
       <div className="h3" style={{ fontSize: 22 }}>{flavor.name}</div>
@@ -746,7 +515,7 @@ function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced })
         {flavor.tagline}
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative' }}>
-        <div style={{ font: '700 18px var(--font-mono)', color: flavor.color }}>${flavor.price.toFixed(2)}<span style={{ fontSize: 11, color: 'var(--fg-3)', fontWeight: 500 }}> /CAN</span></div>
+        <div style={{ font: '700 18px var(--font-mono)', color: flavor.color }}>${flavor.price.toFixed(2)}<span style={{ fontSize: 11, color: 'var(--fg-3)', fontWeight: 500 }}> /BOTTLE</span></div>
         <button type="button" onClick={e => { e.stopPropagation(); onAdd(); }}
           aria-label={`Add ${flavor.name} to fridge`}
           style={{
@@ -772,9 +541,12 @@ function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced })
 // (reduced motion: the three acts render stacked, in normal flow)
 // ─────────────────────────────────────────────────────────────
 const homeSecStoryActs = [
-  { eyebrow: 'ACT 01 · THE PROBLEM',  title: 'Energy drinks were built for warehouses.',     body: "Sugar bombs and stim cocktails tuned for forklift shifts, not 6-hour ranked grinds. You crash. You jitter. You tilt." },
-  { eyebrow: 'ACT 02 · THE SHIFT',    title: 'We rebuilt the can from the inside out.',      body: "75mg of clean caffeine paired with L-theanine. Real fruit, not flavor science. Six electrolytes that pull water in, not push it out." },
-  { eyebrow: 'ACT 03 · THE RESULT',   title: 'Locked in. All session. Every time.',          body: "Smoother focus. Cleaner aim. No 4pm wall. No 1am collapse. Just calm, sustained, hydrated performance." },
+  { eyebrow: 'ACT 01 · THE PROBLEM',  title: 'Energy drinks were built for warehouses.',     body: "Sugar bombs and stim cocktails tuned for forklift shifts, not 6-hour ranked grinds. You crash. You jitter. You tilt.",
+    alt: 'A glowing Slime Lime bottle standing among crushed energy drink cans on a warehouse floor' },
+  { eyebrow: 'ACT 02 · THE SHIFT',    title: 'We rebuilt the bottle from the inside out.',      body: "75mg of clean caffeine paired with L-theanine. Real fruit, not flavor science. Six electrolytes that pull water in, not push it out.",
+    alt: 'A slice of lime dropping into glowing green water, trailing bubbles' },
+  { eyebrow: 'ACT 03 · THE RESULT',   title: 'Locked in. All session. Every time.',          body: "Smoother focus. Cleaner aim. No 4pm wall. No 1am collapse. Just calm, sustained, hydrated performance.",
+    alt: 'A gamer in silhouette, lit by the green glow of a monitor in a dark room' },
 ];
 
 function homeSecStoryAct(a) {
@@ -793,6 +565,7 @@ function ScrollStory() {
   const reducedMotion = homeSecUseMedia('(prefers-reduced-motion: reduce)');
   const shortViewport = homeSecUseMedia('(max-height: 600px)');
   const reduced = reducedMotion || shortViewport;
+  const wide = homeSecUseMedia('(min-width: 900px)');
   const ref = useRefH(null);
   const [progress, setProgress] = useStateH(0);
   useEffectH(() => {
@@ -819,22 +592,32 @@ function ScrollStory() {
   }, [reduced]);
 
   const acts = homeSecStoryActs;
-  const bg = 'linear-gradient(180deg, var(--ink-800) 0%, var(--ink-900) 100%)';
+  const actVisible = i => (i === 0 || progress >= i / 3) && (i === acts.length - 1 || progress < (i + 1) / 3);
+  const actOpacity = i => {
+    if (!actVisible(i)) return 0;
+    const local = (progress - i / 3) * 3;
+    const fadeIn = i === 0 ? 1 : local / 0.15;
+    const fadeOut = i === acts.length - 1 ? 1 : (1 - local) / 0.15;
+    return Math.max(0, Math.min(1, fadeIn, fadeOut));
+  };
+  const bg ='linear-gradient(180deg, var(--ink-800) 0%, var(--ink-900) 100%)';
 
   if (reduced) {
     return (
       <section className="section" style={{ position: 'relative', overflow: 'hidden', background: bg }} data-screen-label="03 Scroll Story">
-        <img src="assets/mark-slime.png" alt="" style={{
-          position: 'absolute',
-          right: -100, top: '50%',
-          width: 700,
-          transform: 'translateY(-50%) translateX(200px)',
-          opacity: 0.18,
-          pointerEvents: 'none',
-        }}/>
         <div className="container" style={{ position: 'relative', zIndex: 2 }}>
-          <div style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 80 }}>
-            {acts.map((a, i) => <div key={i}>{homeSecStoryAct(a)}</div>)}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 80 }}>
+            {acts.map((a, i) => (
+              <div key={i} style={{ display: 'grid', gap: 32, alignItems: 'center',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))' }}>
+                <div style={{ maxWidth: 720 }}>{homeSecStoryAct(a)}</div>
+                <img src={`assets/scenes/story-act-0${i + 1}-640.webp`}
+                  srcSet={`assets/scenes/story-act-0${i + 1}-640.webp 640w, assets/scenes/story-act-0${i + 1}.webp 1200w`}
+                  sizes="(min-width: 900px) 40vw, 92vw" width={640} height={800}
+                  loading="lazy" decoding="async" alt={a.alt}
+                  style={{ width: '100%', maxWidth: 460, height: 'auto', borderRadius: 'var(--radius-lg)', justifySelf: 'center' }}/>
+              </div>
+            ))}
           </div>
         </div>
       </section>
@@ -852,16 +635,30 @@ function ScrollStory() {
         overflow: 'hidden',
         background: bg,
       }}>
-        {/* moving slime mark — scroll-linked, transform/opacity only, no transition */}
-        <img src="assets/mark-slime.png" alt="" style={{
-          position: 'absolute',
-          right: -100, top: '50%',
-          width: 700,
-          transform: `translateY(-50%) translateX(${(1 - progress) * 200}px) rotate(${progress * 90}deg)`,
-          opacity: 0.18 + progress * 0.18,
-          willChange: 'transform, opacity',
-          pointerEvents: 'none',
-        }}/>
+        {/* act imagery — crossfades with the copy; scroll-linked, transform/opacity only, no transition */}
+        <div aria-hidden="true" style={{
+          position: 'absolute', pointerEvents: 'none', overflow: 'hidden',
+          ...(wide
+            ? { top: 0, right: 0, bottom: 0, width: '50%',
+                WebkitMaskImage: 'linear-gradient(90deg, transparent 0%, #000 35%)', maskImage: 'linear-gradient(90deg, transparent 0%, #000 35%)' }
+            : { inset: 0 }),
+        }}>
+          {acts.map((a, i) => {
+            const local = Math.max(0, Math.min(1, (progress - i / 3) * 3));
+            return (
+              <img key={i} src={`assets/scenes/story-act-0${i + 1}-640.webp`}
+                srcSet={`assets/scenes/story-act-0${i + 1}-640.webp 640w, assets/scenes/story-act-0${i + 1}.webp 1200w`}
+                sizes={wide ? '50vw' : '100vw'} alt="" decoding="async"
+                style={{
+                  position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
+                  opacity: actOpacity(i) * (wide ? 1 : 0.32),
+                  transform: `scale(${1.08 - local * 0.08})`,
+                  willChange: 'transform, opacity',
+                }}/>
+            );
+          })}
+          {!wide && <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(6,13,8,0.2), rgba(6,13,8,0.85))' }}/>}
+        </div>
 
         <div className="container" style={{ position: 'relative', zIndex: 2, width: '100%', boxSizing: 'border-box' }}>
           {/* progress bar */}
@@ -883,15 +680,8 @@ function ScrollStory() {
           {/* acts share one grid cell, so the block is as tall as the tallest act */}
           <div style={{ display: 'grid', maxWidth: 720 }}>
             {acts.map((a, i) => {
-              const start = i / 3;
-              const end = (i + 1) / 3;
-              const first = i === 0;
-              const last = i === acts.length - 1;
-              const visible = (first || progress >= start) && (last || progress < end);
-              const local = (progress - start) * 3;
-              const fadeIn = first ? 1 : local / 0.15;
-              const fadeOut = last ? 1 : (1 - local) / 0.15;
-              const opacity = visible ? Math.max(0, Math.min(1, fadeIn, fadeOut)) : 0;
+              const visible = actVisible(i);
+              const opacity = actOpacity(i);
               return (
                 <div key={i} style={{
                   gridArea: '1 / 1',
@@ -979,7 +769,7 @@ function SubscribeBar({ onGo }) {
     <section className="section" style={{ position: 'relative', overflow: 'hidden' }} data-screen-label="05 Subscribe Pitch">
       <div style={{
         position: 'absolute', inset: 0,
-        backgroundImage: 'url(assets/bg-leaves.png)',
+        backgroundImage: 'url(assets/scenes/lifestyle-desk.webp)',
         backgroundSize: 'cover', backgroundPosition: 'center',
         opacity: 0.3,
       }}/>
@@ -1042,7 +832,7 @@ function HomePage({ flavor, onPickFlavor, onAdd }) {
   const flavors = window.FLAVORS;
   return (
     <>
-      <Hero flavor={flavor} onShop={() => { document.getElementById('shop')?.scrollIntoView({ behavior: 'smooth' }); }}/>
+      <Hero flavor={flavor} flavors={flavors} onPickFlavor={onPickFlavor} onShop={() => { document.getElementById('shop')?.scrollIntoView({ behavior: 'smooth' }); }}/>
       <LiveTicker/>
       <ProofStrip/>
       <Lineup flavors={flavors} current={flavor} onPick={onPickFlavor} onAdd={onAdd}/>

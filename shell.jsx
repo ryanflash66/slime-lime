@@ -440,47 +440,15 @@ function ShellCartRow({ item: i, animateIn, onInc, onDec }) {
       border: '1px solid var(--border-1)', borderRadius: 18,
       background: 'var(--surface-card)', alignItems: 'center'
     }}>
-      {/* mini glass-bottle thumbnail */}
+      {/* mini bottle thumbnail (front render: bottle is 70% of the image height, base at 90%) */}
       <div aria-hidden="true" style={{ width: 48, height: 70, flexShrink: 0, position: 'relative' }}>
-        <svg viewBox="0 0 60 86" width="48" height="70" style={{ display: 'block', overflow: 'visible' }}>
-          <defs>
-            <linearGradient id={`mini-j-${i.id}`} x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0" stopColor={i.color} stopOpacity="0.7"/>
-              <stop offset="0.5" stopColor={i.color}/>
-              <stop offset="1" stopColor={i.accent}/>
-            </linearGradient>
-            <linearGradient id={`mini-c-${i.id}`} x1="0" x2="1">
-              <stop offset="0" stopColor="#6a6a6a"/>
-              <stop offset="0.4" stopColor="#fafafa"/>
-              <stop offset="0.7" stopColor="#bdbdbd"/>
-              <stop offset="1" stopColor="#4e4e4e"/>
-            </linearGradient>
-          </defs>
-          {/* shadow */}
-          <ellipse cx="30" cy="82" rx="22" ry="2" fill="rgba(0,0,0,0.5)"/>
-          {/* bottle body — square juice silhouette */}
-          <path d="M 8 80 L 8 24 Q 8 21 11 19 L 16 14 Q 18 12 18 10 L 18 8 Q 18 6 20 6 L 40 6 Q 42 6 42 8 L 42 10 Q 42 12 44 14 L 49 19 Q 52 21 52 24 L 52 80 Q 52 82 50 82 L 10 82 Q 8 82 8 80 Z"
-                fill={`url(#mini-j-${i.id})`} stroke="rgba(0,0,0,0.25)" strokeWidth="0.5"/>
-          {/* glass shine */}
-          <rect x="10" y="22" width="3" height="56" fill="rgba(255,255,255,0.45)" rx="1"/>
-          <rect x="46" y="22" width="2" height="56" fill="rgba(255,255,255,0.25)" rx="1"/>
-          {/* meniscus */}
-          <ellipse cx="30" cy="22" rx="20" ry="1.4" fill="rgba(255,255,255,0.5)"/>
-          {/* cap */}
-          <rect x="18" y="2" width="24" height="9" rx="0.6" fill={`url(#mini-c-${i.id})`}/>
-          <rect x="18" y="2" width="24" height="1.6" fill="rgba(255,255,255,0.6)"/>
-          {/* label blob */}
-          <ellipse cx="30" cy="56" rx="17" ry="14" fill="#ffffff"/>
-          <text x="30" y="60" textAnchor="middle"
-                fontWeight="800" fontSize="11"
-                letterSpacing="-0.5"
-                style={{ fontFamily: 'var(--font-display)' }}
-                fill={i.accent}>SL</text>
-        </svg>
+        <img src={`assets/bottle/renders/card-${i.id}.webp`} alt="" width={75} height={100}
+          loading="lazy" decoding="async"
+          style={{ position: 'absolute', left: '50%', top: -20, height: 100, width: 'auto', transform: 'translateX(-50%)' }}/>
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ font: '600 14px var(--font-ui)' }}>{i.name}</div>
-        <div style={{ font: '400 11px var(--font-mono)', color: 'var(--fg-3)', marginTop: 2 }}>${i.price.toFixed(2)}/CAN · {i.sub}</div>
+        <div style={{ font: '400 11px var(--font-mono)', color: 'var(--fg-3)', marginTop: 2 }}>${i.price.toFixed(2)}/BOTTLE · {i.sub}</div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, border: '1px solid var(--border-2)', borderRadius: 999, padding: 3, flexShrink: 0 }}>
         <button onClick={() => onDec(i.id)} aria-label={`Remove one ${i.name}`} style={{ background: 'transparent', border: 'none', color: 'var(--fg-2)', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 999 }}><Icon name="minus" size={12}/></button>
@@ -832,24 +800,19 @@ function Footer() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// CAN — Now renders the high-fi <Bottle> SVG from the design
-// system (square juice glass bottle w/ blob label + chrome cap),
-// recolored per flavor SKU. Kept named "Can" so call sites stay
-// stable; bottle is the actual product form.
+// CAN — renders the Claude Design still of the double-bubble bottle for this flavor.
+// Kept named "Can" so call sites stay stable. The box is `height` tall and as wide as the
+// bottle; the image overflows it (the bottle is 70% of the render's height, base at 90%).
 // ─────────────────────────────────────────────────────────────
 function Can({ flavor, height = 360 }) {
-  const f = flavor;
+  const imgH = height / 0.7;
   return (
-    <window.Bottle
-      juice={f.color}
-      capSticker={f.color}
-      accent={f.accent}
-      brand="SLIME LIME"
-      flavor={f.name}
-      subtitle={f.sub || 'CLEAN FOCUS'}
-      stats="75MG  ·  5G SUGAR  ·  12FL OZ"
-      height={height}
-    />
+    <span style={{ position: 'relative', display: 'inline-block', height, width: Math.round(height * 0.56) }}>
+      <img src={`assets/bottle/renders/card-${flavor.id}.webp`} alt="" width={800} height={1067}
+        decoding="async"
+        style={{ position: 'absolute', left: '50%', top: -0.2 * imgH, height: imgH, width: 'auto',
+          maxWidth: 'none', transform: 'translateX(-50%)', pointerEvents: 'none' }}/>
+    </span>
   );
 }
 

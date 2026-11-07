@@ -278,7 +278,7 @@ function SubscribePage({ onAdd, onSubscribe }) {
                       }}/>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ font: '600 13px var(--font-ui)' }}>{f.short}</div>
-                        <div className="mono-sm" style={{ color: 'var(--fg-3)', fontSize: 10 }}>${f.price.toFixed(2)}/CAN</div>
+                        <div className="mono-sm" style={{ color: 'var(--fg-3)', fontSize: 10 }}>${f.price.toFixed(2)}/BOTTLE</div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4, border: '1px solid var(--border-2)', borderRadius: 999, padding: 3, flexShrink: 0 }}>
                         <button type="button" aria-label={`Remove one ${f.short}`} onClick={() => update(f.id, -1)} aria-disabled={qty === 0} style={{ background: 'transparent', border: 0, color: qty > 0 ? 'var(--fg-2)' : 'var(--fg-4)', width: 24, height: 24, cursor: qty > 0 ? 'pointer' : 'default', borderRadius: 999 }}><Icon name="minus" size={12}/></button>
