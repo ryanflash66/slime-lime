@@ -265,18 +265,19 @@ button[aria-controls]:not(.btn):not(.iconbtn):not([role="tab"]):not(:disabled):a
 }
 
 /* ───────── Type ───────── */
+/* Page + section titles: Al Fresco Bold (typography kit). Script joins need neutral tracking. */
 .display-xl {
-  font: 800 clamp(44px, 9vw, 128px)/0.92 var(--font-display);
-  letter-spacing: -0.045em;
+  font: 700 clamp(46px, 8.6vw, 124px)/1 var(--font-script);
+  letter-spacing: 0;
+  font-feature-settings: "calt", "liga";
   margin: 0;
-  font-optical-sizing: auto;
   text-wrap: balance;
 }
 .display-lg {
-  font: 800 clamp(36px, 6vw, 88px)/0.96 var(--font-display);
-  letter-spacing: -0.04em;
+  font: 700 clamp(44px, 5.6vw, 84px)/1.02 var(--font-script);
+  letter-spacing: 0;
+  font-feature-settings: "calt", "liga";
   margin: 0;
-  font-optical-sizing: auto;
   text-wrap: balance;
 }
 .h1 {
@@ -425,12 +426,14 @@ html { scroll-behavior: smooth; }
 
 /* ───────── Home hero (3D stage) ───────── */
 .hero-title {
-  font: 800 clamp(46px, 6.2vw, 100px)/0.9 var(--font-display);
-  letter-spacing: -0.05em;
+  font: 700 clamp(44px, 5.4vw, 88px)/1 var(--font-script);
+  letter-spacing: 0;
+  font-feature-settings: "calt", "liga";
   margin: 0;
-  font-optical-sizing: auto;
   text-wrap: balance;
 }
+/* Glossy display word ("Late nights") — slime-display.js renders it as layered SVG */
+.hero-title .sl-display { font-size: 1.32em; display: block; max-width: 100%; margin-bottom: 0.04em; }
 .hero-arrow {
   width: 40px; height: 40px;
   display: inline-grid; place-items: center;

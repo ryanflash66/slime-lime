@@ -163,6 +163,28 @@ function HeroSpecRail({ grid = false }) {
   );
 }
 
+// Typography kit: "Glossy Slime" display lettering (slime-display.js). React owns only the outer
+// span; the kit replaces its children with an sr-only copy + aria-hidden SVG, so we set the text
+// imperatively and re-render when the text or flavor palette changes. Without JS/the kit it stays
+// as plain text styled by .sl-display's CSS fallback.
+const HOME_SLIME_PALETTE = { 'lemon-lime': 'lime', cherry: 'cherry', 'blue-rasp': 'blue-rasp', mango: 'mango', grape: 'grape', watermelon: 'watermelon' };
+function HomeSlimeWord({ text, palette }) {
+  const ref = useRefH(null);
+  useEffectH(() => {
+    const el = ref.current; if (!el) return;
+    let live = true;
+    el.removeAttribute('data-text'); el.classList.remove('is-rendered'); el.textContent = text;
+    const draw = () => { if (live && window.SlimeDisplay) window.SlimeDisplay.render(el); };
+    const fam = getComputedStyle(el).fontFamily;
+    (document.fonts ? document.fonts.load(`700 200px ${fam}`) : Promise.resolve()).catch(() => {}).then(() => {
+      if (window.SlimeDisplay) draw();
+      else window.addEventListener('load', draw, { once: true });
+    });
+    return () => { live = false; window.removeEventListener('load', draw); };
+  }, [text, palette]);
+  return <span ref={ref} className="sl-display" data-palette={palette} data-ground="dark"/>;
+}
+
 function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
   const copyRef = useRefH(null);
   const reduced = heroUseMedia('(prefers-reduced-motion: reduce)');
@@ -197,7 +219,8 @@ function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
     <div ref={copyRef} style={{ position: 'relative', maxWidth: 600, minWidth: 0 }}>
       <div className="eyebrow" style={{ marginBottom: 22 }}>Functional hydration · built for gamers</div>
       <h1 className="hero-title">
-        Late nights deserve <span style={{ color: 'var(--accent)' }}>better fuel.</span>
+        <HomeSlimeWord text="Late nights" palette={HOME_SLIME_PALETTE[flavor.id] || 'lime'}/>
+        deserve <span style={{ color: 'var(--accent)' }}>better fuel.</span>
       </h1>
       <p className="body-lg" style={{ maxWidth: 460, margin: '26px 0 34px', color: 'var(--fg-2)' }}>
         5g sugar. 75mg clean caffeine. Zero crash. Real electrolytes. Built for the long session.
