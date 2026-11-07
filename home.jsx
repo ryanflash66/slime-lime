@@ -62,7 +62,13 @@ function HeroStage({ flavor, frame, fallbackH }) {
       try {
         instRef.current = window.SL3D.create(hostRef.current, { ...hero3DOpts(flavor), frame });
         Promise.resolve(instRef.current.whenReady).then(() =>
-          requestAnimationFrame(() => requestAnimationFrame(() => { if (!cancelled) setReady(true); })));
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (cancelled) return;
+            setReady(true);
+            // Warm the other flavors' stage photos + labels once idle, so switching never waits on the network.
+            const warm = () => { if (!cancelled && instRef.current && instRef.current.preload) instRef.current.preload((window.FLAVORS || []).map(hero3DOpts)); };
+            if ('requestIdleCallback' in window) requestIdleCallback(warm, { timeout: 3000 }); else setTimeout(warm, 1200);
+          })));
       } catch (err) {
         setFailed(true);
       }
@@ -170,19 +176,40 @@ function HeroSpecRail({ grid = false }) {
 const HOME_SLIME_PALETTE = { 'lemon-lime': 'lime', cherry: 'cherry', 'blue-rasp': 'blue-rasp', mango: 'mango', grape: 'grape', watermelon: 'watermelon' };
 function HomeSlimeWord({ text, palette }) {
   const ref = useRefH(null);
+  const shownRef = useRefH(false);
   useEffectH(() => {
     const el = ref.current; if (!el) return;
     let live = true;
+    const first = !shownRef.current;
     el.removeAttribute('data-text'); el.classList.remove('is-rendered'); el.textContent = text;
-    const draw = () => { if (live && window.SlimeDisplay) window.SlimeDisplay.render(el); };
+    // First appearance: hold it back until the lettering is drawn, then fade in (no flat-text -> SVG pop).
+    // Palette changes on flavor switch stay instant, like the rest of the accent swap.
+    const reveal = animate => {
+      if (!live || shownRef.current) return;
+      shownRef.current = true;
+      el.style.opacity = '';
+      if (!animate || !el.animate) return;
+      const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+      el.animate(reduced
+        ? [{ opacity: 0 }, { opacity: 1 }]
+        : [{ opacity: 0, transform: 'scale(0.97)' }, { opacity: 1, transform: 'none' }],
+        { duration: reduced ? 150 : 240, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
+    };
+    if (first) el.style.opacity = '0';
+    const bail = first ? setTimeout(() => reveal(false), 1500) : 0;   // font/kit slow: show the CSS fallback
+    const draw = () => {
+      if (!live || !window.SlimeDisplay) return;
+      window.SlimeDisplay.render(el);
+      if (first) { clearTimeout(bail); reveal(true); }
+    };
     const fam = getComputedStyle(el).fontFamily;
     (document.fonts ? document.fonts.load(`700 200px ${fam}`) : Promise.resolve()).catch(() => {}).then(() => {
       if (window.SlimeDisplay) draw();
       else window.addEventListener('load', draw, { once: true });
     });
-    return () => { live = false; window.removeEventListener('load', draw); };
+    return () => { live = false; clearTimeout(bail); window.removeEventListener('load', draw); };
   }, [text, palette]);
-  return <span ref={ref} className="sl-display" data-palette={palette} data-ground="dark"/>;
+  return <span ref={ref} className="sl-display" data-palette={palette} data-ground="dark" style={{ transformOrigin: 'left bottom' }}/>;
 }
 
 function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
@@ -487,6 +514,7 @@ function Lineup({ flavors, current, onPick, onAdd }) {
 
 function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced }) {
   const [hoverRaw, setHover] = useStateH(false);
+  const [imgLoaded, setImgLoaded] = useStateH(false);
   const hover = canHover && hoverRaw;
   const lift = hover && !reduced;
   return (
@@ -526,10 +554,13 @@ function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced })
           sizes="(max-width: 700px) 92vw, 420px"
           width={640} height={800} loading="lazy" decoding="async"
           alt=""
+          onLoad={() => setImgLoaded(true)}
           style={{
             display: 'block', width: '100%', height: '100%', objectFit: 'cover',
+            // lazy splash fades in over the card's dark well instead of popping in mid-scroll
+            opacity: imgLoaded ? 1 : 0,
             transform: lift ? 'scale(1.04)' : 'none',
-            transition: `transform 600ms ${homeSecEase}`,
+            transition: `transform 600ms ${homeSecEase}, opacity ${reduced ? 200 : 300}ms ${homeSecEase}`,
           }}/>
       </button>
 
