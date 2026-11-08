@@ -12,8 +12,10 @@
  * presence channel (e.g. Supabase Realtime presence or PartyKit) and drive `spawn()` from remote
  * cursor events instead of the scheduler. The UI only reads get()/subscribe(), so nothing else changes.
  *
- * Ghosts: one every ~12-26 s (sometimes a pair), each on screen for ~3-6 s. A ghost glides to
- * something on the page (a card, a button, a heading), hovers, sometimes clicks, then fades away.
+ * Ghosts: a new one every ~4-9 s (often two together, up to 3 on screen), each around for ~5-10 s.
+ * A ghost glides to something on the page (a card, a button, a heading), hovers, often drops a short
+ * chat bubble about it, sometimes clicks, checks out a second thing, then fades away. The cursor look
+ * (pointer + name/message bubble) is ported from the shadcn-style `Cursor` component.
  * They never take pointer events, stay away from your own cursor, pause while a dialog is open or
  * the tab is hidden, and are off under prefers-reduced-motion.
  */
@@ -83,7 +85,21 @@
   var TAGS = ['kovacs_77', 'mira.gg', 'voidstep', 'oxide__', 'frame_', 'lazerblue', 'pacing.exe', 'glitch.me',
     'apex_apex', 'noir.dev', 'sl1me.queen', 'fps_doug', 'tiltproof', 'respawn.jpg', 'lowping', 'byte_mage',
     'neonwolf', 'afk.not', 'crit.chance', 'hydra8', 'nightowl.tv', 'zer0lag'];
-  var COLORS = ['#CAE00F', '#FF3D5C', '#3D8BFF', '#FF9A1F', '#B96BFF', '#FF6B8A'];
+  var COLORS = ['#CAE00F', '#FF3D5C', '#3D8BFF', '#FF9A1F', '#B96BFF', '#FF6B8A', '#2ED3B7'];
+  var SAY = {
+    btn: ['copping a 12-pack', 'adding to fridge', 'subscribe or nah?', 'ok im in', 'restock time', 'cart go brrr'],
+    card: ['this one slaps', 'cherry > all', 'grape is so underrated', 'mango for ranked', 'need this rn', 'the colors tho'],
+    img: ['that label tho', 'clean bottle', 'drip check', 'looks so cold'],
+    head: ['lol', 'real', 'facts', 'zero sugar??', 'locked in', 'gg'],
+    any: ['where is free shipping', 'first time here', 'brb', 'ooh', 'saw this on stream', 'hydrate or diedrate'],
+  };
+  function line(el) {
+    var k = /^(BUTTON|A)$/.test(el.tagName) || el.classList.contains('btn') ? 'btn'
+      : el.matches('.cs-slot, article, .sl-tilt') ? 'card'
+      : el.tagName === 'IMG' ? 'img'
+      : /^H[12]$/.test(el.tagName) ? 'head' : 'any';
+    return pick(Math.random() < 0.8 ? SAY[k] : SAY.any);
+  }
   var TARGETS = '.cs-slot, article, .btn, .hero-dot, .hero-arrow, [data-ghost-target], h1, h2, .sl-tilt, img';
 
   var layer = null, live = [], mouse = { x: -9999, y: -9999 }, timer = 0, lastTags = [];
@@ -149,7 +165,7 @@
   }
 
   function spawn() {
-    if (live.length >= 2) return;
+    if (live.length >= 3) return;
     var t1 = findTarget(null);
     if (!t1) return;
     ensureLayer();
@@ -160,9 +176,10 @@
     node.className = 'sl-ghost';
     node.style.setProperty('--g', color);
     node.innerHTML =
-      '<svg class="sl-ghost-arrow" width="20" height="22" viewBox="0 0 20 22"><path d="M2 2 L2 18 L6.4 14.2 L9.4 20.6 L12.4 19.2 L9.5 13 L15.5 13 Z"/></svg>' +
-      '<span class="sl-ghost-tag"></span><i class="sl-ghost-ring"></i>';
-    node.querySelector('.sl-ghost-tag').textContent = tag;
+      '<i class="sl-ghost-ring"></i>' +
+      '<svg class="sl-ghost-arrow" width="18" height="18" viewBox="0 0 20 20" fill="none"><path fill="currentColor" d="M19.438 6.716 1.115.05A.832.832 0 0 0 .05 1.116L6.712 19.45a.834.834 0 0 0 1.557.025l3.198-8 7.995-3.2a.833.833 0 0 0 0-1.559h-.024Z"/></svg>' +
+      '<span class="sl-ghost-body"><span class="sl-ghost-name"></span><span class="sl-ghost-msg"></span></span>';
+    node.querySelector('.sl-ghost-name').textContent = '@' + tag;
     layer.appendChild(node);
 
     var anchor = t1.el, a0 = anchor.getBoundingClientRect();
@@ -170,14 +187,18 @@
     // start 220-380px away, from the side with more room
     var ang = rnd(0, Math.PI * 2), dist = rnd(220, 380);
     var start = { x: end1.x + Math.cos(ang) * dist, y: end1.y + Math.sin(ang) * dist };
-    var segs = [{ kind: 'move', s: stroke(start, end1) }, { kind: 'hover', ms: rnd(500, 1200), click: Math.random() < 0.45 }];
-    if (Math.random() < 0.35) {                  // sometimes checks out a second thing nearby
+    var talk = Math.random() < 0.7;
+    var segs = [{ kind: 'move', s: stroke(start, end1) },
+      { kind: 'hover', ms: talk ? rnd(2000, 3400) : rnd(900, 1800), click: Math.random() < 0.45, say: talk ? line(anchor) : null }];
+    if (Math.random() < 0.55) {                  // sometimes checks out a second thing nearby
       var t2 = findTarget(anchor);
       if (t2) {
         var r2 = t2.el.getBoundingClientRect();
         var end2 = { x: r2.left - a0.left + t2.x, y: r2.top - a0.top + t2.y };
         if (Math.hypot(end2.x - end1.x, end2.y - end1.y) < 520) {
-          segs.push({ kind: 'move', s: stroke(end1, end2) }, { kind: 'hover', ms: rnd(400, 900), click: Math.random() < 0.3 });
+          var talk2 = !talk && Math.random() < 0.6;
+          segs.push({ kind: 'move', s: stroke(end1, end2) },
+            { kind: 'hover', ms: talk2 ? rnd(1800, 2800) : rnd(700, 1400), click: Math.random() < 0.35, say: talk2 ? line(t2.el) : null });
         }
       }
     }
@@ -208,6 +229,7 @@
         g.pos = bez(seg.s.p0, seg.s.p1, seg.s.p2, seg.s.p3, seg.out ? 1 - Math.pow(1 - el, 2) : easeInOut(el));
         if (seg.out) g.node.style.opacity = String(1 - el * 0.85);
       } else {
+        if (seg.say && !seg.said && el > 0.12) { seg.said = true; say(g, seg.say); }
         if (seg.click && !seg.done && el > 0.45) { seg.done = true; click(g); }
       }
       // ride along with the element (scroll, pinned sections, layout shifts) + a little hand tremor
@@ -216,13 +238,23 @@
       var x = r.left + g.pos.x + jx, y = r.top + g.pos.y + jy;
       g.node.style.transform = 'translate3d(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px,0)';
       // keep the name tag on screen
-      g.node.classList.toggle('is-flip', x > innerWidth - 150);
+      g.node.classList.toggle('is-flip', x > innerWidth - (g.wide || 150));
       if (el >= 1) {
         g.i++; g.t0 = now;
         if (g.i >= g.segs.length) { live.splice(k, 1); g.node.remove(); }
       }
     }
     if (live.length) requestAnimationFrame(frame);
+  }
+
+  // message bubble pops in under the name (the shadcn Cursor's name + message layout)
+  function say(g, text) {
+    var body = g.node.querySelector('.sl-ghost-body'), msg = g.node.querySelector('.sl-ghost-msg');
+    msg.textContent = text;
+    body.classList.add('has-msg');
+    g.wide = Math.max(150, body.offsetWidth + 40);
+    body.animate([{ transform: 'scale(0.92)', opacity: 0.6 }, { transform: 'scale(1)', opacity: 1 }],
+      { duration: 240, easing: 'cubic-bezier(0.23,1,0.32,1)' });
   }
 
   function click(g) {
@@ -235,12 +267,12 @@
   function schedule(first) {
     clearTimeout(timer);
     if (!ghostsOn || reduced()) return;
-    var slow = (coarseMQ && coarseMQ.matches) || innerWidth < 700 ? 1.5 : 1;
-    var wait = first ? rnd(5000, 9000) : rnd(12000, 26000) * slow;
+    var slow = (coarseMQ && coarseMQ.matches) || innerWidth < 700 ? 1.3 : 1;
+    var wait = first ? rnd(1500, 3000) : rnd(4000, 9000) * slow;
     timer = setTimeout(function () {
       if (!busy()) {
         spawn();
-        if (Math.random() < 0.22) setTimeout(function () { if (!busy() && ghostsOn) spawn(); }, rnd(800, 2200));   // a duo
+        if (Math.random() < 0.4) setTimeout(function () { if (!busy() && ghostsOn) spawn(); }, rnd(600, 2000));   // a duo
       }
       schedule(false);
     }, wait);
