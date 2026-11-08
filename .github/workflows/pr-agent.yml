@@ -1,0 +1,23 @@
+# PR-Agent review and security check, from the shared workflow in
+# ryanflash66/shared-workflows. This file only picks the web profile.
+name: PR Agent review
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+jobs:
+  review:
+    uses: ryanflash66/shared-workflows/.github/workflows/pr-agent.yml@main
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    secrets:
+      ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_KEY }}
+    with:
+      profile: web
+      # Optional: one or two lines on what matters most in this repo.
+      focus: ""
