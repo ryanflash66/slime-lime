@@ -431,6 +431,24 @@ function LineupSelect({ flavors, current, onPick, onAdd, canHover }) {
   const frameRef = useRefH(null);
   const [idx, setIdx] = useStateH(0);
   const seen = useRefH(new Set());
+  // Scrolling only *previews* a flavor's theme. The committed theme is lime by default, or
+  // whatever the player explicitly picked (card / pip click here, or the hero switcher);
+  // leaving the select screen restores it.
+  const committedRef = useRefH(current);
+  const previewIdRef = useRefH(null);
+  const [lockedId, setLockedId] = useStateH(null);
+  const onPickRef = useRefH(onPick);
+  onPickRef.current = onPick;
+  const currentRef = useRefH(current);
+  currentRef.current = current;
+  useEffectH(() => {
+    // a theme change that isn't our scroll preview is a real pick (e.g. the hero switcher)
+    if (current.id !== previewIdRef.current) committedRef.current = current;
+  }, [current.id]);
+  const restore = () => {
+    previewIdRef.current = null;
+    if (currentRef.current.id !== committedRef.current.id) onPickRef.current(committedRef.current);
+  };
   const n = flavors.length;
   const f = flavors[idx];
 
@@ -451,6 +469,8 @@ function LineupSelect({ flavors, current, onPick, onAdd, canHover }) {
             const i = Math.round(self.progress * (n - 1));
             if (i !== last) { last = i; setIdx(i); }
           },
+          onLeave: restore,
+          onLeaveBack: restore,
         },
       });
       stRef.current = move.scrollTrigger;
@@ -471,7 +491,7 @@ function LineupSelect({ flavors, current, onPick, onAdd, canHover }) {
       });
       return () => window.SLMotion.ScrollTrigger.removeEventListener('refresh', fit);
     }, secRef);
-    return () => ctx.revert();
+    return () => { ctx.revert(); restore(); };
   }, []);
 
   // New selection: re-theme, decode the name, load the stat bars.
@@ -481,7 +501,7 @@ function LineupSelect({ flavors, current, onPick, onAdd, canHover }) {
     const y = st.scroll();
     if (y < st.start - 2 || y > st.end + 2) return;   // only while the select screen is on
     const { gsap } = window.SLMotion;
-    if (f.id !== current.id) onPick(f);
+    if (f.id !== current.id) { previewIdRef.current = f.id; onPick(f); }
     if (nameRef.current) gsap.to(nameRef.current, { duration: 0.6, scrambleText: { text: f.name.toUpperCase(), chars: '01<>/|_#', speed: 0.7 }, overwrite: true });
     Object.values(homeSecProfile[f.id]).forEach((v, k) => {
       const bar = barRefs.current[k];
@@ -494,6 +514,11 @@ function LineupSelect({ flavors, current, onPick, onAdd, canHover }) {
   const jump = i => {
     const st = stRef.current;
     if (!st) return;
+    // explicit pick: this flavor's theme sticks after leaving the select screen
+    committedRef.current = flavors[i];
+    previewIdRef.current = null;
+    setLockedId(flavors[i].id);
+    if (current.id !== flavors[i].id) onPick(flavors[i]);
     window.SLMotion.scrollTo(st.start + (st.end - st.start) * (i / (n - 1)), { duration: 0.8 });
   };
   const prof = homeSecProfile[f.id];
@@ -525,7 +550,7 @@ function LineupSelect({ flavors, current, onPick, onAdd, canHover }) {
         </div>
       </div>
       <div className="cs-stage">
-        <div ref={frameRef} className="cs-frame" aria-hidden="true"><i/><i/><i/><i/><b>{'P1 · ' + pad2(idx + 1) + '/' + pad2(n)}</b></div>
+        <div ref={frameRef} className="cs-frame" aria-hidden="true"><i/><i/><i/><i/><b>{'P1 · ' + pad2(idx + 1) + '/' + pad2(n) + (lockedId === f.id ? ' · LOCKED IN' : '')}</b></div>
         <div ref={trackRef} className="cs-track">
           {flavors.map((x, i) => (
             <div key={x.id} className="cs-slot" ref={el => { slotRefs.current[i] = el; }}>
