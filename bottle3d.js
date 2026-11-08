@@ -1,7 +1,11 @@
 // SL3D — real-time 3D render of the Slime Lime double-bubble bottle (three.js, ES module).
 // Loads the Claude Design model (assets/bottle/slime-lime-bottle.glb), then exposes
-// window.SL3D.create(container, opts) -> { setFlavor(opts), setFrame(frame), destroy() } and fires
-// a 'sl3d-ready' event on window. Callers show the still render until then.
+// window.SL3D.create(container, opts) -> { setFlavor(opts, { dir }), setFrame(frame), spin(), destroy() }
+// and fires a 'sl3d-ready' event on window. Callers show the still render until then.
+// opts.base   [r,g,b] stage colour (default the page canvas); opts.rest = resting turn (radians)
+// opts.drag   true: drag the bottle to turn it; on release it keeps your speed, then settles front
+// setFlavor(next, { dir: 1 | -1 }) plays a parallax slide (new stage wipes in from that side)
+// instead of the crossfade.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
@@ -128,6 +132,11 @@ function liquidMaterial(juice, node) {
   return mat;
 }
 
+// opts.exclusive: while such an instance is alive (e.g. the fridge close-up), the others stop
+// rendering so two WebGL stages never run at once.
+const instances = new Set(), exclusives = new Set();
+const othersPaused = self => exclusives.size > 0 && !exclusives.has(self);
+
 // ── Public API ─────────────────────────────────────────────────
 function create(gltf, container, opts = {}) {
   const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -174,9 +183,10 @@ function create(gltf, container, opts = {}) {
     if (!W || !H) return;
     const ctx = backdropCanvas.getContext('2d');
     const c = new THREE.Color(state.juice);
-    const base = [6, 13, 8];
+    const base = state.base || [6, 13, 8];
+    const baseCss = `rgb(${base.join(',')})`;
     const tint = k => `rgb(${[c.r, c.g, c.b].map((v, i) => Math.round(v * 255 * k + base[i] * (1 - k))).join(',')})`;
-    ctx.fillStyle = 'rgb(6,13,8)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = baseCss; ctx.fillRect(0, 0, W, H);
     const cx = bx * W, cy = by * H, R = unitPx * 5.2;
     // Flavor stage photo (cover-fit, centred on the bottle where the crop allows), dimmed for the type.
     const img = state.bg && bgImages.get(state.bg);
@@ -185,10 +195,10 @@ function create(gltf, container, opts = {}) {
       const iw = img.naturalWidth * s, ih = img.naturalHeight * s;
       const dx = Math.min(0, Math.max(W - iw, cx - iw / 2)), dy = Math.min(0, Math.max(H - ih, cy - ih * 0.55));
       ctx.drawImage(img, dx, dy, iw, ih);
-      ctx.fillStyle = 'rgba(6,13,8,0.38)'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = `rgba(${base.join(',')},0.38)`; ctx.fillRect(0, 0, W, H);
     }
     const g = ctx.createRadialGradient(cx, cy + unitPx * 0.9, 0, cx, cy + unitPx * 0.9, R);
-    g.addColorStop(0, tint(0.5)); g.addColorStop(0.3, tint(0.2)); g.addColorStop(0.65, tint(0.05)); g.addColorStop(1, 'rgb(6,13,8)');
+    g.addColorStop(0, tint(0.5)); g.addColorStop(0.3, tint(0.2)); g.addColorStop(0.65, tint(0.05)); g.addColorStop(1, baseCss);
     ctx.globalAlpha = img ? 0.45 : 1;
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
     ctx.globalAlpha = img ? 0.7 : 1;
@@ -227,6 +237,30 @@ function create(gltf, container, opts = {}) {
   const backdropPrev = new THREE.Mesh(backdrop.geometry, prevMat);
   backdropPrev.renderOrder = -1; backdropPrev.visible = false; scene.add(backdropPrev);
   const FADE_MS = reduced ? 200 : 450;
+  // Parallax slide: the outgoing stage is a strip on the prev plane that shrinks toward the far side
+  // while its picture drifts at PARALLAX speed; the incoming stage drifts in behind it, a glowing seam
+  // rides the edge, and the bottle leans into the move. Pure UV/scale work, no canvas repaints per frame.
+  const SLIDE_MS = 950 * (window.__slSlowMo || 1), PARALLAX = 0.32;   // __slSlowMo: test hook
+  let slideStart = -1, slideDir = 1, pendingLabels = false;
+  const seamCanvas = document.createElement('canvas'); seamCanvas.width = 64; seamCanvas.height = 4;
+  const seamTex = new THREE.CanvasTexture(seamCanvas); seamTex.colorSpace = THREE.SRGBColorSpace;
+  const seamMat = new THREE.MeshBasicMaterial({ map: seamTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false, opacity: 0 });
+  const seam = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), seamMat);
+  seam.renderOrder = -1; seam.visible = false; scene.add(seam);
+  const paintSeam = juice => {
+    const ctx = seamCanvas.getContext('2d'), c = new THREE.Color(juice);
+    const rgb = `${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)}`;
+    const g = ctx.createLinearGradient(0, 0, 64, 0);
+    g.addColorStop(0, `rgba(${rgb},0)`); g.addColorStop(0.42, `rgba(${rgb},0.55)`); g.addColorStop(0.5, 'rgba(255,255,255,0.95)');
+    g.addColorStop(0.58, `rgba(${rgb},0.55)`); g.addColorStop(1, `rgba(${rgb},0)`);
+    ctx.clearRect(0, 0, 64, 4); ctx.fillStyle = g; ctx.fillRect(0, 0, 64, 4); seamTex.needsUpdate = true;
+  };
+  const resetSlide = () => {
+    slideStart = -1; seam.visible = false;
+    backdropTex.offset.set(0, 0);
+    prevTex.offset.set(0, 0); prevTex.repeat.set(1, 1); prevMat.color.setScalar(1);
+    backdropPrev.scale.copy(backdrop.scale); backdropPrev.position.copy(backdrop.position); backdropPrev.position.z += 0.01;
+  };
   const fromJuice = new THREE.Color(), toJuice = new THREE.Color();
   let fadeStart = -1;
   const startFade = () => {
@@ -292,16 +326,21 @@ function create(gltf, container, opts = {}) {
     }).catch(() => {});
   };
 
-  const paint = () => {
-    loadBg();
-    if (Liquid) { Liquid.material.color.set(state.juice); Liquid.material.emissive.set(state.juice); }
+  // Light that belongs to the bottle (floor pool + studio glow); during a slide it changes with the label.
+  const relight = () => {
     if (poolMat.map) poolMat.map.dispose();
     const c = new THREE.Color(state.juice);
     const rgba = a => `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${a})`;
     poolMat.map = radialTexture([[0, rgba(0.55)], [0.5, rgba(0.15)], [1, rgba(0)]]); poolMat.needsUpdate = true;
-    paintBackdrop();
     // re-tint the studio's back glow
     envRT.dispose(); envRT = studioEnv(renderer, state.juice); scene.environment = envRT.texture;
+    dirty = true;
+  };
+  const paint = () => {
+    loadBg();
+    if (Liquid) { Liquid.material.color.set(state.juice); Liquid.material.emissive.set(state.juice); }
+    paintBackdrop();
+    if (!pendingLabels) relight();
     dirty = true;
   };
 
@@ -330,8 +369,10 @@ function create(gltf, container, opts = {}) {
     const pw = visW * FAR * 1.08, ph = visH * FAR * 1.08;
     backdrop.scale.set(pw, ph, 1);
     backdrop.position.set(0, AIM + 0.6 * (1 - FAR), BACK_Z);
-    backdropPrev.scale.copy(backdrop.scale);
-    backdropPrev.position.copy(backdrop.position); backdropPrev.position.z += 0.01;
+    if (slideStart < 0) {
+      backdropPrev.scale.copy(backdrop.scale);
+      backdropPrev.position.copy(backdrop.position); backdropPrev.position.z += 0.01;
+    }
     const px = Math.min(2048, Math.round(w * Math.min(window.devicePixelRatio || 1, 1.5)));
     const cw = px, ch = Math.round(px * ph / pw);
     if (cw !== backdropCanvas.width || ch !== backdropCanvas.height) {
@@ -363,12 +404,85 @@ function create(gltf, container, opts = {}) {
   const onVis = () => { if (!document.hidden) loop(); };
   document.addEventListener('visibilitychange', onVis);
 
-  const REST = -0.3;                                // label turned slightly toward the copy
+  const REST = opts.rest != null ? opts.rest : -0.3; // label turned slightly toward the copy
+
+  // Drag to turn: 1:1 while held (one turn per 380px), then keep the release speed, project where
+  // that momentum would coast to and settle on the nearest front-facing turn (critically damped).
+  let userRot = 0, userVel = 0, userTarget = 0, settling = false, drag = null, lastT = 0;
+  const PX_PER_TURN = 380, OMEGA = 7.5;
+  const onDown = e => {
+    if (e.button != null && e.button !== 0) return;
+    canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    drag = { x: e.clientX, rot: userRot, samples: [{ x: e.clientX, t: e.timeStamp }] };
+    settling = false; spinStart = -1; userVel = 0;
+    canvas.style.cursor = 'grabbing';
+    loop();
+  };
+  const onMove = e => {
+    if (!drag) return;
+    userRot = drag.rot + ((e.clientX - drag.x) / PX_PER_TURN) * TAU;
+    drag.samples.push({ x: e.clientX, t: e.timeStamp });
+    if (drag.samples.length > 5) drag.samples.shift();
+    dirty = true; loop();
+  };
+  const onUp = () => {
+    if (!drag) return;
+    const a = drag.samples[0], b = drag.samples[drag.samples.length - 1];
+    drag = null; canvas.style.cursor = 'grab';
+    const vx = b.t > a.t ? ((b.x - a.x) / (b.t - a.t)) * 1000 : 0;          // px/s
+    userVel = (vx / PX_PER_TURN) * TAU;                                       // rad/s
+    const projected = userRot + userVel * (0.998 / (1 - 0.998)) / 1000;      // momentum projection
+    userTarget = Math.round(projected / TAU) * TAU;
+    settling = true; loop();
+  };
+  if (opts.drag) {
+    canvas.style.cursor = 'grab'; canvas.style.touchAction = 'pan-y';
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+  }
   const t0 = performance.now();
   const ease = t => 1 - Math.pow(1 - t, 4);
   const tick = now => {
     raf = 0;
     const t = (now - t0) / 1000;
+    const dt = Math.min(0.05, lastT ? (now - lastT) / 1000 : 0.016); lastT = now;
+    if (settling) {
+      const acc = -2 * OMEGA * userVel - OMEGA * OMEGA * (userRot - userTarget);
+      userVel += acc * dt; userRot += userVel * dt;
+      if (Math.abs(userRot - userTarget) < 0.002 && Math.abs(userVel) < 0.02) { userRot = userTarget = 0; userVel = 0; settling = false; }
+      dirty = true;
+    }
+    let lean = 0, drift = 0;
+    if (slideStart >= 0) {
+      const k = Math.min(1, (now - slideStart) / SLIDE_MS);
+      const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;   // ease-in-out cubic
+      const f = 1 - e, pw = backdrop.scale.x, d = slideDir;
+      // outgoing strip: shrinks toward the side it leaves by, its picture drifting slower than the edge
+      backdropPrev.scale.set(pw * Math.max(f, 1e-4), backdrop.scale.y, 1);
+      backdropPrev.position.set(backdrop.position.x + d * (-pw / 2 + (pw * f) / 2), backdrop.position.y, backdrop.position.z + 0.01);
+      prevTex.repeat.set(Math.max(f, 1e-4), 1);
+      prevTex.offset.set(d > 0 ? PARALLAX * e : e * (1 - PARALLAX), 0);
+      prevMat.color.setScalar(1 - 0.45 * e);                                    // falls into shadow as it goes
+      prevMat.opacity = 1;
+      // incoming stage drifts into place behind it
+      backdropTex.offset.set(d > 0 ? -PARALLAX * f : PARALLAX * f, 0);
+      seam.visible = true;
+      seam.scale.set(pw * 0.05, backdrop.scale.y, 1);
+      seam.position.set(backdrop.position.x + d * (-pw / 2 + pw * f), backdrop.position.y, backdrop.position.z + 0.02);
+      seamMat.opacity = Math.sin(Math.PI * k) * 0.9;
+      lean = d * 0.07 * Math.sin(Math.PI * k);
+      drift = -d * 0.22 * Math.sin(Math.PI * k);
+      // the seam "scans" the bottle: juice and label change as it passes over it
+      const seamX = d > 0 ? f : 1 - f;
+      const m = Math.min(1, Math.max(0, d > 0 ? (bx + 0.1 - seamX) / 0.2 : (seamX - (bx - 0.1)) / 0.2));
+      const mix = m * m * (3 - 2 * m);
+      if (Liquid) { Liquid.material.color.lerpColors(fromJuice, toJuice, k >= 1 ? 1 : mix); Liquid.material.emissive.copy(Liquid.material.color); }
+      if (pendingLabels && (mix >= 0.5 || k >= 1)) { pendingLabels = false; applyLabels(); relight(); }
+      if (k >= 1) { resetSlide(); backdropPrev.visible = false; }
+      dirty = true;
+    }
     if (!reduced) {
       px += (tx - px) * 0.06; py += (ty - py) * 0.06;
       let s = 0;
@@ -377,14 +491,15 @@ function create(gltf, container, opts = {}) {
         s = spinFrom * (1 - ease(k));
         if (k >= 1) spinStart = -1;
       }
-      bottle.rotation.y = REST + Math.sin(t * 0.45) * 0.16 + px * 0.35 + s;
-      root.rotation.z = -0.05 + Math.sin(t * 0.3) * 0.015;
+      bottle.rotation.y = REST + Math.sin(t * 0.45) * 0.16 + px * 0.35 + s + userRot;
+      root.rotation.z = -0.05 + Math.sin(t * 0.3) * 0.015 + lean;
+      bottle.position.x = drift;
       root.rotation.x = py * 0.05;
       bottle.position.y = 0.18 + Math.sin(t * 0.9) * 0.05;
       shadow.scale.setScalar(1 - (bottle.position.y - 0.18) * 0.8);
       dirty = true;
     } else if (dirty) {
-      bottle.rotation.y = REST; root.rotation.z = -0.05; bottle.position.y = 0.18;
+      bottle.rotation.y = REST + userRot; root.rotation.z = -0.05; bottle.position.y = 0.18;
     }
     if (fadeStart >= 0) {
       const k = Math.min(1, (now - fadeStart) / FADE_MS), e = ease(k);
@@ -394,9 +509,12 @@ function create(gltf, container, opts = {}) {
       dirty = true;
     }
     if (dirty) { renderer.render(scene, camera); dirty = false; }
-    if (!reduced || spinStart >= 0 || fadeStart >= 0) loop();
+    if (!reduced || spinStart >= 0 || fadeStart >= 0 || slideStart >= 0 || settling || drag) loop();
   };
-  const loop = () => { if (!raf && visible && !document.hidden) raf = requestAnimationFrame(tick); };
+  const self = { wake: () => { dirty = true; loop(); } };
+  const loop = () => { if (!raf && visible && !document.hidden && !othersPaused(self)) raf = requestAnimationFrame(tick); };
+  instances.add(self);
+  if (opts.exclusive) exclusives.add(self);
 
   let destroyed = false;
   paint();
@@ -418,23 +536,38 @@ function create(gltf, container, opts = {}) {
       });
     },
     setFrame(next) { frame = { ...frame, ...next }; layout(); loop(); },
-    setFlavor(next) {
+    // one full turn (e.g. as a product arrives on screen)
+    spin() { if (reduced) return; spinFrom = TAU; spinStart = performance.now(); loop(); },
+    setFlavor(next, how = {}) {
       const changed = next.juice && next.juice !== state.juice;
       const idChanged = next.id && next.id !== state.id;
-      if (changed || idChanged) startFade();
+      if (changed || idChanged) {
+        startFade();
+        if (how.dir && !reduced) {
+          fadeStart = -1;                              // the slide owns the prev plane + liquid tween
+          resetSlide();
+          slideDir = how.dir > 0 ? 1 : -1; slideStart = performance.now(); pendingLabels = !!idChanged;
+          paintSeam(next.juice || state.juice);
+        } else if (slideStart >= 0) { resetSlide(); pendingLabels = false; }   // paint() relights
+      }
       state = { ...state, ...next };
       paint();
       toJuice.set(state.juice);
-      if (fadeStart >= 0 && Liquid) { Liquid.material.color.copy(fromJuice); Liquid.material.emissive.copy(fromJuice); }
-      if (idChanged) applyLabels();
+      if ((fadeStart >= 0 || slideStart >= 0) && Liquid) { Liquid.material.color.copy(fromJuice); Liquid.material.emissive.copy(fromJuice); }
+      if (idChanged && !pendingLabels) applyLabels();
       if (changed && !reduced) { spinFrom = TAU; spinStart = performance.now(); }
       loop();
     },
     destroy() {
       destroyed = true;
+      instances.delete(self);
+      if (exclusives.delete(self)) instances.forEach(i => i.wake());
       cancelAnimationFrame(raf); ro.disconnect(); if (io) io.disconnect();
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('pointermove', onPointer);
+      canvas.removeEventListener('pointerdown', onDown); canvas.removeEventListener('pointermove', onMove);
+      canvas.removeEventListener('pointerup', onUp); canvas.removeEventListener('pointercancel', onUp);
+      seam.geometry.dispose(); seamTex.dispose(); seamMat.dispose();
       // Model geometry and label textures are shared across instances; dispose only what this one made.
       ownMaterials.forEach(m => m.dispose());
       bub.geometry.dispose(); bub.dispose();

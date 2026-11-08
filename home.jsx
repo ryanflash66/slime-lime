@@ -26,11 +26,8 @@ function heroUseMedia(query) {
 // Fallback for "Read the science" when no onWatch is passed: same target as the footer's
 // "The science" link (/story#science). The router resets scroll on hashchange, so scroll after it.
 function heroReadScience() {
+  // The route stage scrolls to #science once the Story page is on screen.
   window.location.hash = '/story#science';
-  setTimeout(() => {
-    const el = document.getElementById('science');
-    if (el) el.scrollIntoView({ block: 'start' });
-  }, 60);
 }
 
 const heroSpecs = [
@@ -46,6 +43,48 @@ const hero3DOpts = f => ({
   stats: '75MG · 5G SUGAR · 12FL OZ', word: heroWord(f),
   bg: `assets/scenes/bg-${f.id}-${window.innerWidth < 900 ? 'tall' : 'wide'}.webp`,
 });
+
+// +1 = the new slide comes in from the right (moving forward through the lineup), -1 = from the left.
+function heroSlideDir(fromId, toId) {
+  const list = window.FLAVORS || [];
+  const a = list.findIndex(f => f.id === fromId), b = list.findIndex(f => f.id === toId), n = list.length;
+  if (a < 0 || b < 0 || a === b) return 0;
+  return (b - a + n) % n <= n / 2 ? 1 : -1;
+}
+
+// Swipe (touch) or a sideways trackpad scroll over the hero steps through the flavors.
+function heroUseSwipe(ref, step, layoutKey) {
+  const stepRef = useRefH(step);
+  stepRef.current = step;
+  useEffectH(() => {
+    const el = ref.current;
+    if (!el) return;
+    let start = null, acc = 0, cool = 0;
+    const down = e => { if (e.pointerType === 'touch') start = { x: e.clientX, y: e.clientY }; };
+    const up = e => {
+      if (!start) return;
+      const dx = e.clientX - start.x, dy = e.clientY - start.y;
+      start = null;
+      if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.4) stepRef.current(dx < 0 ? 1 : -1);
+    };
+    const cancel = () => { start = null; };
+    const wheel = e => {
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) * 1.2) return;   // vertical scrolling is untouched
+      const now = performance.now();
+      if (now < cool) return;
+      acc += e.deltaX;
+      if (Math.abs(acc) > 60) { stepRef.current(acc > 0 ? 1 : -1); acc = 0; cool = now + 650; }
+    };
+    el.addEventListener('pointerdown', down, { passive: true });
+    el.addEventListener('pointerup', up, { passive: true });
+    el.addEventListener('pointercancel', cancel, { passive: true });
+    el.addEventListener('wheel', wheel, { passive: true });
+    return () => {
+      el.removeEventListener('pointerdown', down); el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', cancel); el.removeEventListener('wheel', wheel);
+    };
+  }, [layoutKey]);   // the hero renders a different <section> per layout
+}
 
 // The WebGL stage. Falls back to the SVG bottle until bottle3d.js loads, or if WebGL is unavailable.
 function HeroStage({ flavor, frame, fallbackH }) {
@@ -83,12 +122,18 @@ function HeroStage({ flavor, frame, fallbackH }) {
     };
   }, []);
 
-  useEffectH(() => { if (instRef.current) instRef.current.setFlavor(hero3DOpts(flavor)); }, [flavor.id]);
+  // Slide direction = the shorter way round the lineup (so prev/next arrows, dots and swipes all read right).
+  const prevIdxRef = useRefH(null);
+  useEffectH(() => {
+    const dir = heroSlideDir(prevIdxRef.current, flavor.id);
+    prevIdxRef.current = flavor.id;
+    if (instRef.current) instRef.current.setFlavor(hero3DOpts(flavor), { dir });
+  }, [flavor.id]);
   useEffectH(() => { if (instRef.current) instRef.current.setFrame(frame); }, [frame.x, frame.y, frame.fill]);
 
   const showFallback = !ready;
   return (
-    <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'var(--ink-800)' }}>
+    <div aria-hidden="true" data-hero-stage style={{ position: 'absolute', inset: 0, background: 'var(--ink-800)' }}>
       <div ref={hostRef} style={{
         position: 'absolute', inset: 0,
         opacity: ready ? 1 : 0,
@@ -119,12 +164,23 @@ function HeroSwitcher({ flavors, current, onPick, align = 'center' }) {
   const i = Math.max(0, flavors.findIndex(f => f.id === current.id));
   const go = d => onPick(flavors[(i + d + flavors.length) % flavors.length]);
   const pad = n => String(n).padStart(2, '0');
+  const nameRef = useRefH(null);
+  const lastRef = useRefH(current.id);
+  // the flavor name slides in from the same side as the stage
+  useEffectH(() => {
+    const dir = heroSlideDir(lastRef.current, current.id);
+    lastRef.current = current.id;
+    const el = nameRef.current;
+    if (!dir || !el || !el.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    el.animate([{ transform: `translateX(${dir * 18}px)`, opacity: 0, filter: 'blur(3px)' }, { transform: 'none', opacity: 1, filter: 'none' }],
+      { duration: 520, delay: 160, easing: heroEase, fill: 'backwards' });
+  }, [current.id]);
   return (
     <div role="group" aria-label="Choose a flavor" style={{
       display: 'flex', flexDirection: 'column', alignItems: align, gap: 12,
     }}>
       <div className="mono-sm" aria-live="polite" style={{ color: 'var(--fg-2)', letterSpacing: '0.14em', whiteSpace: 'nowrap' }}>
-        <span style={{ color: 'var(--accent)' }}>{pad(i + 1)}</span> / {pad(flavors.length)} — {current.name.toUpperCase()}
+        <span style={{ color: 'var(--accent)' }}>{pad(i + 1)}</span> / {pad(flavors.length)} — <span ref={nameRef} style={{ display: 'inline-block' }}>{current.name.toUpperCase()}</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <button type="button" className="hero-arrow" aria-label="Previous flavor" onClick={() => go(-1)}><Icon name="arrowL" size={16}/></button>
@@ -169,49 +225,6 @@ function HeroSpecRail({ grid = false }) {
   );
 }
 
-// Typography kit: "Glossy Slime" display lettering (slime-display.js). React owns only the outer
-// span; the kit replaces its children with an sr-only copy + aria-hidden SVG, so we set the text
-// imperatively and re-render when the text or flavor palette changes. Without JS/the kit it stays
-// as plain text styled by .sl-display's CSS fallback.
-const HOME_SLIME_PALETTE = { 'lemon-lime': 'lime', cherry: 'cherry', 'blue-rasp': 'blue-rasp', mango: 'mango', grape: 'grape', watermelon: 'watermelon' };
-function HomeSlimeWord({ text, palette }) {
-  const ref = useRefH(null);
-  const shownRef = useRefH(false);
-  useEffectH(() => {
-    const el = ref.current; if (!el) return;
-    let live = true;
-    const first = !shownRef.current;
-    el.removeAttribute('data-text'); el.classList.remove('is-rendered'); el.textContent = text;
-    // First appearance: hold it back until the lettering is drawn, then fade in (no flat-text -> SVG pop).
-    // Palette changes on flavor switch stay instant, like the rest of the accent swap.
-    const reveal = animate => {
-      if (!live || shownRef.current) return;
-      shownRef.current = true;
-      el.style.opacity = '';
-      if (!animate || !el.animate) return;
-      const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-      el.animate(reduced
-        ? [{ opacity: 0 }, { opacity: 1 }]
-        : [{ opacity: 0, transform: 'scale(0.97)' }, { opacity: 1, transform: 'none' }],
-        { duration: reduced ? 150 : 240, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
-    };
-    if (first) el.style.opacity = '0';
-    const bail = first ? setTimeout(() => reveal(false), 1500) : 0;   // font/kit slow: show the CSS fallback
-    const draw = () => {
-      if (!live || !window.SlimeDisplay) return;
-      window.SlimeDisplay.render(el);
-      if (first) { clearTimeout(bail); reveal(true); }
-    };
-    const fam = getComputedStyle(el).fontFamily;
-    (document.fonts ? document.fonts.load(`700 200px ${fam}`) : Promise.resolve()).catch(() => {}).then(() => {
-      if (window.SlimeDisplay) draw();
-      else window.addEventListener('load', draw, { once: true });
-    });
-    return () => { live = false; clearTimeout(bail); window.removeEventListener('load', draw); };
-  }, [text, palette]);
-  return <span ref={ref} className="sl-display" data-palette={palette} data-ground="dark" style={{ transformOrigin: 'left bottom' }}/>;
-}
-
 function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
   const copyRef = useRefH(null);
   const reduced = heroUseMedia('(prefers-reduced-motion: reduce)');
@@ -219,6 +232,11 @@ function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
   const small = heroUseMedia('(max-width: 600px)');
   const list = flavors || window.FLAVORS;
   const pick = onPickFlavor || (() => {});
+  const secRef = useRefH(null);
+  heroUseSwipe(secRef, d => {
+    const i = Math.max(0, list.findIndex(f => f.id === flavor.id));
+    pick(list[(i + d + list.length) % list.length]);
+  }, narrow);
 
   // First-load entrance, once per session; fill 'backwards' so nothing lingers or blocks clicks.
   React.useLayoutEffect(() => {
@@ -243,11 +261,10 @@ function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
   const ctaFlex = small ? { flex: '1 1 auto', justifyContent: 'center' } : null;
 
   const copy = (
-    <div ref={copyRef} style={{ position: 'relative', maxWidth: 600, minWidth: 0 }}>
+    <div ref={copyRef} data-hero-copy style={{ position: 'relative', maxWidth: 600, minWidth: 0 }}>
       <div className="eyebrow" style={{ marginBottom: 22 }}>Functional hydration · built for gamers</div>
       <h1 className="hero-title">
-        <HomeSlimeWord text="Late nights" palette={HOME_SLIME_PALETTE[flavor.id] || 'lime'}/>
-        deserve <span style={{ color: 'var(--accent)' }}>better fuel.</span>
+        Late nights deserve <span style={{ color: 'var(--accent)' }}>better fuel.</span>
       </h1>
       <p className="body-lg" style={{ maxWidth: 460, margin: '26px 0 34px', color: 'var(--fg-2)' }}>
         5g sugar. 75mg clean caffeine. Zero crash. Real electrolytes. Built for the long session.
@@ -270,7 +287,7 @@ function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
 
   if (narrow) {
     return (
-      <section data-screen-label="01 Home Hero" style={{ position: 'relative', background: 'var(--ink-800)', overflow: 'hidden' }}>
+      <section ref={secRef} data-no-reveal data-level="Spawn" data-screen-label="01 Home Hero" style={{ position: 'relative', background: 'var(--ink-800)', overflow: 'hidden' }}>
         <div style={{
           position: 'relative', height: small ? 'clamp(440px, 64svh, 560px)' : 'clamp(520px, 66svh, 680px)',
           WebkitMaskImage: 'linear-gradient(180deg, #000 78%, transparent)', maskImage: 'linear-gradient(180deg, #000 78%, transparent)',
@@ -290,7 +307,7 @@ function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
   }
 
   return (
-    <section data-screen-label="01 Home Hero" style={{
+    <section ref={secRef} data-no-reveal data-level="Spawn" data-screen-label="01 Home Hero" style={{
       position: 'relative', overflow: 'hidden', background: 'var(--ink-800)',
       height: 'max(680px, calc(100svh - 104px))',
     }}>
@@ -387,6 +404,7 @@ function LiveTicker() {
 
   return (
     <section
+      className="sl-ticker"
       aria-label="Live order feed"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -428,17 +446,20 @@ function LiveTicker() {
 // ─────────────────────────────────────────────────────────────
 function ProofStrip() {
   const stats = [
-    { v: '75mg', l: 'CLEAN CAFFEINE', s: 'L-theanine paired. Slow-release. No crash.' },
-    { v: '5g', l: 'SUGAR · 35 CAL', s: 'Real fruit. Low glycemic. No phantom calories.' },
-    { v: '6', l: 'ELECTROLYTES', s: 'Sodium, potassium, magnesium. Real hydration.' },
-    { v: '0', l: 'BS INGREDIENTS', s: 'No taurine, no fake colors, no smoke and mirrors.' },
+    { v: '75mg', n: 75, u: 'mg', l: 'CLEAN CAFFEINE', s: 'L-theanine paired. Slow-release. No crash.' },
+    { v: '5g', n: 5, u: 'g', l: 'SUGAR · 35 CAL', s: 'Real fruit. Low glycemic. No phantom calories.' },
+    { v: '6', n: 6, u: '', l: 'ELECTROLYTES', s: 'Sodium, potassium, magnesium. Real hydration.' },
+    // counts *down* to zero, scoreboard style
+    { v: '0', n: 0, u: '', from: 99, l: 'BS INGREDIENTS', s: 'No taurine, no fake colors, no smoke and mirrors.' },
   ];
   return (
     <section className="section-sm" style={{ borderBottom: '1px solid var(--border-1)' }}>
-      <div className="container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 32 }}>
+      <div className="container sl-skew" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 32 }}>
         {stats.map(s => (
           <div key={s.l} style={{ borderLeft: '1px solid var(--border-2)', paddingLeft: 24 }}>
-            <div style={{ font: '700 clamp(44px, 10vw, 64px)/1 var(--font-mono)', color: 'var(--accent)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>{s.v}</div>
+            <div style={{ font: '700 clamp(44px, 10vw, 64px)/1 var(--font-mono)', color: 'var(--accent)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>
+              <span data-count={s.n} data-suffix={s.u} data-from={s.from}>{s.v}</span>
+            </div>
             <div className="mono-sm" style={{ color: 'var(--fg-2)', marginTop: 14, fontSize: 11 }}>{s.l}</div>
             <div className="body" style={{ fontSize: 14, marginTop: 8, color: 'var(--fg-3)' }}>{s.s}</div>
           </div>
@@ -451,12 +472,172 @@ function ProofStrip() {
 // ─────────────────────────────────────────────────────────────
 // LINEUP — flavor switcher + grid
 // ─────────────────────────────────────────────────────────────
+// Flavor "character stats" for the select screen (taste profile, 0-100).
+const homeSecProfile = {
+  'lemon-lime': { TART: 64, SWEET: 38, CHILL: 56, HYPE: 90 },
+  cherry:       { TART: 88, SWEET: 46, CHILL: 40, HYPE: 74 },
+  'blue-rasp':  { TART: 58, SWEET: 52, CHILL: 96, HYPE: 82 },
+  mango:        { TART: 34, SWEET: 80, CHILL: 42, HYPE: 86 },
+  grape:        { TART: 30, SWEET: 72, CHILL: 48, HYPE: 99 },
+  watermelon:   { TART: 22, SWEET: 62, CHILL: 84, HYPE: 58 },
+};
+
+// Character select: the lineup pins, scrolling slides a coverflow of flavors past a P1 frame,
+// and whichever flavor lands in the frame is "selected": it re-themes the whole site and its
+// stats load into the panel. Snaps to each flavor. GSAP-only; the grid below is the fallback.
+function LineupSelect({ flavors, current, onPick, onAdd, canHover }) {
+  const secRef = useRefH(null);
+  const trackRef = useRefH(null);
+  const slotRefs = useRefH([]);
+  const nameRef = useRefH(null);
+  const barRefs = useRefH([]);
+  const stRef = useRefH(null);
+  const frameRef = useRefH(null);
+  const [idx, setIdx] = useStateH(0);
+  const seen = useRefH(new Set());
+  // Scrolling only *previews* a flavor's theme. The committed theme is lime by default, or
+  // whatever the player explicitly picked (card / pip click here, or the hero switcher);
+  // leaving the select screen restores it.
+  const committedRef = useRefH(current);
+  const previewIdRef = useRefH(null);
+  const [lockedId, setLockedId] = useStateH(null);
+  const onPickRef = useRefH(onPick);
+  onPickRef.current = onPick;
+  const currentRef = useRefH(current);
+  currentRef.current = current;
+  useEffectH(() => {
+    // a theme change that isn't our scroll preview is a real pick (e.g. the hero switcher)
+    if (current.id !== previewIdRef.current) committedRef.current = current;
+  }, [current.id]);
+  const restore = () => {
+    previewIdRef.current = null;
+    if (currentRef.current.id !== committedRef.current.id) onPickRef.current(committedRef.current);
+  };
+  const n = flavors.length;
+  const f = flavors[idx];
+
+  // Layout effect: the pin wrapper must be reverted before React removes the section on unmount.
+  React.useLayoutEffect(() => {
+    const { gsap } = window.SLMotion;
+    const ctx = gsap.context(() => {
+      const track = trackRef.current;
+      const dist = () => Math.max(0, track.scrollWidth - window.innerWidth);
+      let last = -1;
+      const move = gsap.to(track, {
+        x: () => -dist(), ease: 'none',
+        scrollTrigger: {
+          trigger: secRef.current, pin: true, start: 'top top', end: () => '+=' + dist() * 1.15,
+          scrub: 0.6, invalidateOnRefresh: true,
+          snap: { snapTo: 1 / (n - 1), inertia: false, duration: { min: 0.15, max: 0.45 }, delay: 0.06, ease: 'power2.inOut' },
+          onUpdate: self => {
+            const i = Math.round(self.progress * (n - 1));
+            if (i !== last) { last = i; setIdx(i); }
+          },
+          onLeave: restore,
+          onLeaveBack: restore,
+        },
+      });
+      stRef.current = move.scrollTrigger;
+      // The P1 frame hugs a card; card height varies with text wrap, so measure it.
+      const fit = () => {
+        const s = slotRefs.current[0], fr = frameRef.current;
+        if (!s || !fr) return;
+        fr.style.width = (s.offsetWidth + 30) + 'px';
+        fr.style.height = (s.offsetHeight + 24) + 'px';
+      };
+      fit();
+      window.SLMotion.ScrollTrigger.addEventListener('refresh', fit);
+      slotRefs.current.forEach(slot => {
+        gsap.timeline({ scrollTrigger: { containerAnimation: move, trigger: slot, start: 'left right', end: 'right left', scrub: true } })
+          .fromTo(slot, { rotationY: 42, scale: 0.74, autoAlpha: 0.3, z: -160 },
+            { rotationY: 0, scale: 1, autoAlpha: 1, z: 0, ease: 'power1.out', duration: 1 })
+          .to(slot, { rotationY: -42, scale: 0.74, autoAlpha: 0.3, z: -160, ease: 'power1.in', duration: 1 });
+      });
+      return () => window.SLMotion.ScrollTrigger.removeEventListener('refresh', fit);
+    }, secRef);
+    return () => { ctx.revert(); restore(); };
+  }, []);
+
+  // New selection: re-theme, decode the name, load the stat bars.
+  useEffectH(() => {
+    const st = stRef.current;
+    if (!st) return;
+    const y = st.scroll();
+    if (y < st.start - 2 || y > st.end + 2) return;   // only while the select screen is on
+    const { gsap } = window.SLMotion;
+    if (f.id !== current.id) { previewIdRef.current = f.id; onPick(f); }
+    if (nameRef.current) gsap.to(nameRef.current, { duration: 0.6, scrambleText: { text: f.name.toUpperCase(), chars: '01<>/|_#', speed: 0.7 }, overwrite: true });
+    Object.values(homeSecProfile[f.id]).forEach((v, k) => {
+      const bar = barRefs.current[k];
+      if (bar) gsap.fromTo(bar, { scaleX: 0 }, { scaleX: v / 100, duration: 0.7, ease: 'expo.out', delay: k * 0.06, overwrite: true });
+    });
+    seen.current.add(f.id);
+    if (seen.current.size === n && window.SLGame) window.SLGame.achieve('scout');
+  }, [idx]);
+
+  const jump = i => {
+    const st = stRef.current;
+    if (!st) return;
+    // explicit pick: this flavor's theme sticks after leaving the select screen
+    committedRef.current = flavors[i];
+    previewIdRef.current = null;
+    setLockedId(flavors[i].id);
+    if (current.id !== flavors[i].id) onPick(flavors[i]);
+    window.SLMotion.scrollTo(st.start + (st.end - st.start) * (i / (n - 1)), { duration: 0.8 });
+  };
+  const prof = homeSecProfile[f.id];
+  const pad2 = v => String(v).padStart(2, '0');
+
+  return (
+    <section ref={secRef} className="cs" id="shop" data-level="Character select" data-screen-label="02 Lineup" aria-label="Choose your flavor">
+      <div className="container cs-top">
+        <div style={{ minWidth: 0 }}>
+          <div className="eyebrow" style={{ marginBottom: 14 }}>// SELECT YOUR FLAVOR · 6 SKUs</div>
+          <h2 className="display-lg">Six flavors.<br/><span style={{ color: 'var(--accent)' }}>One mission.</span></h2>
+        </div>
+        <div className="cs-panel">
+          <div ref={nameRef} className="cs-name" aria-live="polite">{f.name.toUpperCase()}</div>
+          <div className="cs-stats">
+            {Object.keys(prof).map((k, i) => (
+              <React.Fragment key={k}>
+                <span>{k}</span>
+                <span className="cs-stat-bar" aria-hidden="true"><i ref={el => { barRefs.current[i] = el; }} style={{ transform: 'scaleX(' + (prof[k] / 100) + ')' }}/></span>
+                <span>{prof[k]}</span>
+              </React.Fragment>
+            ))}
+          </div>
+          <div className="cs-pips" role="group" aria-label="Jump to flavor">
+            {flavors.map((x, i) => (
+              <button key={x.id} type="button" aria-label={x.name} aria-current={i === idx ? 'true' : undefined} onClick={() => jump(i)}><span/></button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="cs-stage">
+        <div ref={frameRef} className="cs-frame" aria-hidden="true"><i/><i/><i/><i/><b>{'P1 · ' + pad2(idx + 1) + '/' + pad2(n) + (lockedId === f.id ? ' · LOCKED IN' : '')}</b></div>
+        <div ref={trackRef} className="cs-track">
+          {flavors.map((x, i) => (
+            <div key={x.id} className="cs-slot" ref={el => { slotRefs.current[i] = el; }}>
+              <FlavorCard flavor={x}
+                onAdd={() => onAdd(x)} onSelect={() => jump(i)}
+                highlighted={i === idx}
+                canHover={canHover} reduced={false}/>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="cs-hint" aria-hidden="true">SCROLL TO CYCLE · CLICK A FLAVOR TO SELECT</div>
+    </section>
+  );
+}
+
 function Lineup({ flavors, current, onPick, onAdd }) {
   // Hover effects only for real pointers; transform-based hover is dropped under reduced motion.
   const canHover = homeSecUseMedia('(hover: hover) and (pointer: fine)');
   const reduced = homeSecUseMedia('(prefers-reduced-motion: reduce)');
+  if (window.SLMotion && !reduced) return <LineupSelect flavors={flavors} current={current} onPick={onPick} onAdd={onAdd} canHover={canHover}/>;
   return (
-    <section className="section" id="shop" data-screen-label="02 Lineup">
+    <section className="section" id="shop" data-level="Character select" data-screen-label="02 Lineup">
       <div className="container">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 56, flexWrap: 'wrap', gap: 24 }}>
           <div style={{ minWidth: 0 }}>
@@ -541,7 +722,7 @@ function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced })
       </div>
 
       {/* bottle area — selects this flavor's theme */}
-      <button type="button" onClick={onSelect}
+      <button type="button" onClick={onSelect} className="sl-tilt"
         aria-label={`Preview ${flavor.name} theme`}
         style={{
           display: 'block', width: '100%', aspectRatio: '4 / 5', padding: 0, margin: '0 0 18px',
@@ -570,7 +751,12 @@ function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced })
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative' }}>
         <div style={{ font: '700 18px var(--font-mono)', color: flavor.color }}>${flavor.price.toFixed(2)}<span style={{ fontSize: 11, color: 'var(--fg-3)', fontWeight: 500 }}> /BOTTLE</span></div>
-        <button type="button" onClick={e => { e.stopPropagation(); onAdd(); }}
+        <button type="button" onClick={e => {
+            e.stopPropagation();
+            // loot pickup: the bottle arcs into the Fridge button, then the cart opens
+            if (window.SLGame) window.SLGame.loot(e.currentTarget, `assets/bottle/renders/card-${flavor.id}.webp`).then(onAdd);
+            else onAdd();
+          }}
           aria-label={`Add ${flavor.name} to fridge`}
           style={{
             background: hover ? flavor.color : 'var(--surface-pill)',
@@ -622,8 +808,43 @@ function ScrollStory() {
   const wide = homeSecUseMedia('(min-width: 900px)');
   const ref = useRefH(null);
   const [progress, setProgress] = useStateH(0);
+  // With GSAP loaded the whole section is one scrubbed ScrollTrigger timeline that writes
+  // straight to the DOM (no React state per scroll frame); the state path is the fallback.
+  const gs = !!window.SLMotion;
+  const barRef = useRefH(null);
+  const imgRefs = useRefH([]);
+  const actRefs = useRefH([]);
   useEffectH(() => {
-    if (reduced) return;
+    if (reduced || !gs) return;
+    const gsap = window.SLMotion.gsap;
+    const n = homeSecStoryActs.length;
+    const ctx = gsap.context(() => {
+      const tl = gsap.timeline({
+        defaults: { ease: 'none' },
+        scrollTrigger: { trigger: ref.current, start: 'top top', end: 'bottom bottom', scrub: 0.6,
+          onLeave: () => { if (window.SLGame) window.SLGame.achieve('lore'); } },
+      });
+      tl.fromTo(barRef.current, { scaleX: 0 }, { scaleX: 1, duration: n }, 0);
+      const peak = wide ? 1 : 0.32;
+      imgRefs.current.forEach((img, i) => {
+        tl.fromTo(img, { scale: 1.1 }, { scale: 1, duration: 1 }, i);
+        if (i > 0) tl.fromTo(img, { opacity: 0 }, { opacity: peak, duration: 0.18 }, i - 0.05);
+        else gsap.set(img, { opacity: peak });
+        if (i < n - 1) tl.to(img, { opacity: 0, duration: 0.18 }, i + 0.87);
+      });
+      actRefs.current.forEach((el, i) => {
+        if (i > 0) {
+          tl.fromTo(el, { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.04 }, i);
+          tl.fromTo(el.children, { y: 44, opacity: 0 }, { y: 0, opacity: 1, duration: 0.2, stagger: 0.05, ease: 'power3.out' }, i);
+        } else gsap.set(el, { autoAlpha: 1 });
+        if (i < n - 1) tl.to(el.children, { y: -36, opacity: 0, duration: 0.14, stagger: 0.03, ease: 'power2.in' }, i + 0.82)
+          .set(el, { autoAlpha: 0 }, i + 1);
+      });
+    }, ref);
+    return () => ctx.revert();
+  }, [reduced, wide, gs]);
+  useEffectH(() => {
+    if (reduced || gs) return;
     let raf = 0;
     const measure = () => {
       raf = 0;
@@ -658,7 +879,7 @@ function ScrollStory() {
 
   if (reduced) {
     return (
-      <section className="section" style={{ position: 'relative', overflow: 'hidden', background: bg }} data-screen-label="03 Scroll Story">
+      <section className="section" style={{ position: 'relative', overflow: 'hidden', background: bg }} data-level="Lore" data-screen-label="03 Scroll Story">
         <div className="container" style={{ position: 'relative', zIndex: 2 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 80 }}>
             {acts.map((a, i) => (
@@ -679,7 +900,7 @@ function ScrollStory() {
   }
 
   return (
-    <section ref={ref} style={{ position: 'relative', height: '300vh' }} data-screen-label="03 Scroll Story">
+    <section ref={ref} data-no-reveal style={{ position: 'relative', height: '300vh' }} data-level="Lore" data-screen-label="03 Scroll Story">
       <div style={{
         position: 'sticky', top: 0,
         height: '100vh',
@@ -700,13 +921,15 @@ function ScrollStory() {
           {acts.map((a, i) => {
             const local = Math.max(0, Math.min(1, (progress - i / 3) * 3));
             return (
-              <img key={i} src={`assets/scenes/story-act-0${i + 1}-640.webp`}
+              <img key={i} ref={el => { imgRefs.current[i] = el; }} src={`assets/scenes/story-act-0${i + 1}-640.webp`}
                 srcSet={`assets/scenes/story-act-0${i + 1}-640.webp 640w, assets/scenes/story-act-0${i + 1}.webp 1200w`}
                 sizes={wide ? '50vw' : '100vw'} alt="" decoding="async"
                 style={{
                   position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
-                  opacity: actOpacity(i) * (wide ? 1 : 0.32),
-                  transform: `scale(${1.08 - local * 0.08})`,
+                  ...(gs ? { opacity: 0 } : {
+                    opacity: actOpacity(i) * (wide ? 1 : 0.32),
+                    transform: `scale(${1.08 - local * 0.08})`,
+                  }),
                   willChange: 'transform, opacity',
                 }}/>
             );
@@ -718,10 +941,10 @@ function ScrollStory() {
           {/* progress bar */}
           <div aria-hidden="true" style={{ marginBottom: 56 }}>
             <div style={{ position: 'relative', height: 2, background: 'var(--border-1)' }}>
-              <div style={{
+              <div ref={barRef} style={{
                 position: 'absolute', inset: 0,
                 background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)',
-                transform: `scaleX(${progress})`, transformOrigin: 'left center',
+                ...(gs ? { transform: 'scaleX(0)' } : { transform: `scaleX(${progress})` }), transformOrigin: 'left center',
               }}/>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 12, font: '500 11px var(--font-mono)', color: 'var(--fg-3)', letterSpacing: '0.08em' }}>
@@ -737,14 +960,16 @@ function ScrollStory() {
               const visible = actVisible(i);
               const opacity = actOpacity(i);
               return (
-                <div key={i} style={{
+                <div key={i} ref={el => { actRefs.current[i] = el; }} style={{
                   gridArea: '1 / 1',
                   minWidth: 0,
-                  opacity,
-                  transform: `translateY(${visible ? 0 : 20}px)`,
-                  // opacity tracks scroll directly; only the visibility toggle's nudge eases
-                  transition: `transform 240ms ${homeSecEase}`,
-                  pointerEvents: visible ? 'auto' : 'none',
+                  ...(gs ? { visibility: i === 0 ? 'visible' : 'hidden' } : {
+                    opacity,
+                    transform: `translateY(${visible ? 0 : 20}px)`,
+                    // opacity tracks scroll directly; only the visibility toggle's nudge eases
+                    transition: `transform 240ms ${homeSecEase}`,
+                    pointerEvents: visible ? 'auto' : 'none',
+                  }),
                 }}>
                   {homeSecStoryAct(a)}
                 </div>
@@ -767,7 +992,7 @@ function Streamers() {
     { name: 'Pacing.exe',          handle: '@pacing.exe', reach: '210K followers', game: 'League of Legends',quote: "I drink one before scrims and one mid-match. Six hours later I'm still locked in, no headache." },
   ];
   return (
-    <section className="section" style={{ background: 'var(--ink-900)', borderTop: '1px solid var(--border-1)', borderBottom: '1px solid var(--border-1)' }} data-screen-label="04 Streamers">
+    <section className="section" style={{ background: 'var(--ink-900)', borderTop: '1px solid var(--border-1)', borderBottom: '1px solid var(--border-1)' }} data-level="Squad" data-screen-label="04 Streamers">
       <div className="container">
         <div style={{ marginBottom: 56 }}>
           <div className="eyebrow" style={{ marginBottom: 16 }}>// CREATOR DESK · WHAT THEY'RE SAYING</div>
@@ -777,7 +1002,7 @@ function Streamers() {
           </h2>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 20 }}>
+        <div className="sl-skew" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 20 }}>
           {quotes.map((q, i) => (
             <div key={i} className="card" style={{ padding: 32 }}>
               {/* live indicator */}
@@ -820,9 +1045,9 @@ function Streamers() {
 // ─────────────────────────────────────────────────────────────
 function SubscribeBar({ onGo }) {
   return (
-    <section className="section" style={{ position: 'relative', overflow: 'hidden' }} data-screen-label="05 Subscribe Pitch">
-      <div style={{
-        position: 'absolute', inset: 0,
+    <section className="section" style={{ position: 'relative', overflow: 'hidden' }} data-level="Loadout" data-screen-label="05 Subscribe Pitch">
+      <div data-parallax="0.3" style={{
+        position: 'absolute', inset: '-15% 0',
         backgroundImage: 'url(assets/scenes/lifestyle-desk.webp)',
         backgroundSize: 'cover', backgroundPosition: 'center',
         opacity: 0.3,
@@ -886,7 +1111,10 @@ function HomePage({ flavor, onPickFlavor, onAdd }) {
   const flavors = window.FLAVORS;
   return (
     <>
-      <Hero flavor={flavor} flavors={flavors} onPickFlavor={onPickFlavor} onShop={() => { document.getElementById('shop')?.scrollIntoView({ behavior: 'smooth' }); }}/>
+      <Hero flavor={flavor} flavors={flavors} onPickFlavor={onPickFlavor} onShop={() => {
+        if (window.SLMotion) window.SLMotion.scrollTo('#shop');
+        else document.getElementById('shop')?.scrollIntoView({ behavior: 'smooth' });
+      }}/>
       <LiveTicker/>
       <ProofStrip/>
       <Lineup flavors={flavors} current={flavor} onPick={onPickFlavor} onAdd={onAdd}/>

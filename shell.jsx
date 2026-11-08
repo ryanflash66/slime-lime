@@ -1,5 +1,5 @@
 /* global React */
-// Shared shell: Nav, Footer, CartDrawer, Icon, Wordmark, AppCtx (cart + theme)
+// Shared shell: Nav, Footer, Icon, Wordmark, cart hook + theme (the cart UI is fridge.jsx)
 const { useState, useEffect, useRef, useMemo, createContext, useContext } = React;
 
 // ─────────────────────────────────────────────────────────────
@@ -128,13 +128,121 @@ function useCart() {
   };
   const remove = id => setCart(c => c.filter(i => i.id !== id));
   const clear = () => setCart([]);
+  // Fridge close-up: set a flavor's exact count (0 clears the slot) without reopening anything.
+  const setQty = (f, qty) => setCart(c => {
+    if (qty <= 0) return c.filter(i => i.id !== f.id);
+    if (c.some(i => i.id === f.id)) return c.map(i => i.id === f.id ? { ...i, qty } : i);
+    return [...c, { ...f, qty }];
+  });
   const inc = id => setCart(c => c.map(i => i.id === id ? { ...i, qty: i.qty + 1 } : i));
   const dec = id => setCart(c => c.map(i => i.id === id ? { ...i, qty: Math.max(0, i.qty - 1) } : i).filter(i => i.qty > 0));
   const count = cart.reduce((s, i) => s + i.qty, 0);
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
-  return { cart, count, total, add, replaceSubscription, inc, dec, remove, clear, cartOpen, setCartOpen };
+  return { cart, count, total, add, replaceSubscription, inc, dec, remove, setQty, clear, cartOpen, setCartOpen };
 }
+
+// ─────────────────────────────────────────────────────────────
+// PAYPAL (sandbox) CHECKOUT
+// The browser only ever sends flavor ids + quantities. /api/paypal/orders prices the
+// cart on the server and creates the PayPal order; /api/paypal/capture captures it.
+// ─────────────────────────────────────────────────────────────
+let shellPayPalPromise = null;
+
+function shellLoadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = true;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('PayPal script failed to load'));
+    document.head.appendChild(s);
+  });
+}
+
+// Loads config + the PayPal v6 web SDK once per page; resolves to { sdk, env }.
+function shellLoadPayPal() {
+  if (shellPayPalPromise) return shellPayPalPromise;
+  shellPayPalPromise = (async () => {
+    const res = await fetch('/api/paypal/config');
+    if (!res.ok) throw Object.assign(new Error('Checkout is not configured'), { unavailable: true });
+    const { clientId, env } = await res.json();
+    const host = env === 'live' ? 'https://www.paypal.com' : 'https://www.sandbox.paypal.com';
+    if (!window.paypal || !window.paypal.createInstance) await shellLoadScript(`${host}/web-sdk/v6/core`);
+    const sdk = await window.paypal.createInstance({ clientId, components: ['paypal-payments'], pageType: 'cart' });
+    const methods = await sdk.findEligibleMethods({ currencyCode: 'USD' });
+    if (!methods.isEligible('paypal')) throw Object.assign(new Error('PayPal is not available here'), { unavailable: true });
+    return { sdk, env };
+  })();
+  // Let a later open retry after a failure.
+  shellPayPalPromise.catch(() => { shellPayPalPromise = null; });
+  return shellPayPalPromise;
+}
+
+async function shellPostJson(url, body) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+// status: idle | loading | ready | paying | capturing | paid | cancelled | error | unavailable
+function useShellPayPal({ active, items, onPaid }) {
+  const [state, setState] = useState({ status: 'idle', env: null, message: '', receipt: null });
+  const sessionRef = useRef(null);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const onPaidRef = useRef(onPaid);
+  onPaidRef.current = onPaid;
+
+  useEffect(() => {
+    if (!active || sessionRef.current) return;
+    let alive = true;
+    setState(s => ({ ...s, status: 'loading', message: '' }));
+    shellLoadPayPal().then(({ sdk, env }) => {
+      if (!alive) return;
+      sessionRef.current = sdk.createPayPalOneTimePaymentSession({
+        onApprove: async data => {
+          setState(s => ({ ...s, status: 'capturing', message: '' }));
+          try {
+            const r = await shellPostJson('/api/paypal/capture', { orderId: data.orderId });
+            if (r.status !== 'COMPLETED') throw new Error(`Payment ${String(r.status || 'not completed').toLowerCase()}`);
+            setState(s => ({ ...s, status: 'paid', receipt: r, message: '' }));
+            if (onPaidRef.current) onPaidRef.current(r);
+          } catch (e) {
+            setState(s => ({ ...s, status: 'error', message: e.message || 'Payment could not be captured' }));
+          }
+        },
+        onCancel: () => setState(s => ({ ...s, status: 'cancelled', message: 'Payment cancelled. Your fridge is still stocked.' })),
+        onError: () => setState(s => ({ ...s, status: 'error', message: 'PayPal hit an error. Try again.' })),
+      });
+      setState(s => ({ ...s, status: 'ready', env }));
+    }).catch(e => {
+      if (!alive) return;
+      setState(s => ({ ...s, status: e.unavailable ? 'unavailable' : 'error',
+        message: e.unavailable ? 'Checkout is offline on this host' : 'PayPal failed to load. Reopen the cart to retry.' }));
+    });
+    return () => { alive = false; };
+  }, [active]);
+
+  // Called straight from the click handler so the PayPal popup isn't blocked.
+  const start = () => {
+    const session = sessionRef.current;
+    if (!session) return;
+    setState(s => ({ ...s, status: 'paying', message: '', receipt: null }));
+    const lines = itemsRef.current.map(i => ({ id: i.id, qty: i.qty, subscription: i.subscription || undefined }));
+    const orderPromise = shellPostJson('/api/paypal/orders', { items: lines })
+      .then(d => ({ orderId: d.orderId }))
+      .catch(e => {
+        setState(s => ({ ...s, status: 'error', message: e.message || 'Could not start checkout' }));
+        throw e;
+      });
+    Promise.resolve(session.start({ presentationMode: 'auto' }, orderPromise)).catch(() => {});
+  };
+
+  return { ...state, start };
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // SHELL HELPERS (prefixed: all scripts share one global scope)
@@ -199,27 +307,65 @@ const SHELL_FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]),
 function useRoute() {
   const [route, setRoute] = useState(() => window.location.hash.slice(1) || '/');
   useEffect(() => {
-    const onHash = () => {
-      const next = window.location.hash.slice(1) || '/';
-      setRoute(next);
-      // In-page anchors ("/story#science") are scrolled to after render, below.
-      if (!next.includes('#')) window.scrollTo(0, 0);
-    };
+    // Scrolling (top of page / in-page anchors) is owned by useRouteStage, which runs it
+    // once the new page is actually on screen.
+    const onHash = () => setRoute(window.location.hash.slice(1) || '/');
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
-  useEffect(() => {
-    document.title = shellTitleFor(route);
-    const anchor = route.split('#')[1];
-    if (!anchor) return;
-    const el = document.getElementById(anchor);
-    if (!el) { window.scrollTo(0, 0); return; }
-    // Offset by the sticky header so the target isn't tucked underneath it.
-    const header = document.querySelector('header');
-    const offset = header ? header.offsetHeight : 0;
-    window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - offset });
-  }, [route]);
+  useEffect(() => { document.title = shellTitleFor(route); }, [route]);
   return route;
+}
+
+const shellRouteBase = r => (r || '/').split('#')[0] || '/';
+
+// Scroll for a freshly shown route: its #anchor (offset by the sticky header), else the top.
+function shellScrollForRoute(route, smooth) {
+  const anchor = route.split('#')[1];
+  const el = anchor && document.getElementById(anchor);
+  const M = window.SLMotion;
+  if (!el) { if (M) M.scrollTo(0, { instant: true }); else window.scrollTo({ top: 0, behavior: 'instant' }); return; }
+  if (M) { M.scrollTo(el, { instant: !smooth }); return; }
+  const header = document.querySelector('header');
+  const offset = header ? header.offsetHeight : 0;
+  window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - offset, behavior: smooth ? 'smooth' : 'instant' });
+}
+
+// Page transitions. Returns the route to *render*: on a page change it lags the URL until the
+// GSAP curtain covers the old page, then swaps, scrolls, uncovers and starts the new page's
+// scroll reveals (scoped to pageRef). Anchor-only changes on the same page just scroll.
+function useRouteStage(route, pageRef) {
+  const [shown, setShown] = useState(route);
+  const first = useRef(true);
+  useEffect(() => {
+    if (route === shown) return;
+    if (shellRouteBase(route) === shellRouteBase(shown)) { setShown(route); return; }
+    const M = window.SLMotion;
+    if (!M) { setShown(route); return; }
+    let live = true;
+    M.cover().then(() => { if (live) setShown(route); });
+    return () => { live = false; };
+  }, [route]);
+  React.useLayoutEffect(() => {
+    const samePage = !first.current && pageRef.current && pageRef.current.dataset.base === shellRouteBase(shown);
+    if (first.current) {
+      // initial load: only jump for a deep link ("#/story#science")
+      if (shown.includes('#')) shellScrollForRoute(shown, false);
+    } else {
+      shellScrollForRoute(shown, samePage);
+    }
+    first.current = false;
+    if (pageRef.current) pageRef.current.dataset.base = shellRouteBase(shown);
+    if (window.SLMotion) window.SLMotion.uncover();
+  }, [shown]);
+  // Reveals are per page, not per anchor.
+  const base = shellRouteBase(shown);
+  useEffect(() => {
+    const M = window.SLMotion;
+    if (!M || !pageRef.current) return;
+    return M.pageIn(pageRef.current);
+  }, [base]);
+  return shown;
 }
 
 function navTo(path) {
@@ -241,6 +387,108 @@ function shellIsActive(path, route) {
   return (path === '/' && (route === '/' || route === '')) || (path !== '/' && route.startsWith(path));
 }
 
+// Move the nav indicator under `link` (or the aria-current link when null).
+function shellNavIndTo(navRef, indRef, link, instant) {
+  const M = window.SLMotion, nav = navRef.current, ind = indRef.current;
+  if (!M || !nav || !ind) return;
+  const el = link || nav.querySelector('a[aria-current="page"]');
+  if (!el) { M.gsap.to(ind, { autoAlpha: 0, duration: 0.2, overwrite: true }); return; }
+  const vars = { x: el.offsetLeft, scaleX: el.offsetWidth / 100, autoAlpha: 1, overwrite: true };
+  if (instant || M.reduced()) M.gsap.set(ind, vars);
+  else M.gsap.to(ind, { ...vars, duration: 0.45, ease: 'expo.out' });
+}
+
+// ─────────────────────────────────────────────────────────────
+// PLAYERS ONLINE pill (presence.js) — count in the HUD strip, popover with the ghost-cursor toggle
+// ─────────────────────────────────────────────────────────────
+const shellFmt = n => n.toLocaleString('en-US');
+
+function ShellPresence({ short }) {
+  const P = window.SLPresence;
+  const [st, setSt] = useState(() => (P ? { ...P.get() } : null));
+  const [ghosts, setGhosts] = useState(() => (P ? P.ghosts() : false));
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null);
+  const popRef = useRef(null);
+  const numRef = useRef(null);
+
+  useEffect(() => {
+    if (!P) return;
+    const offA = P.subscribe(s => setSt({ ...s }));
+    const offB = P.onGhosts(setGhosts);
+    return () => { offA(); offB(); };
+  }, []);
+  // a quick green blip whenever the number moves
+  useEffect(() => {
+    const el = numRef.current;
+    if (el && el.animate && !shellMatches(SHELL_REDUCED_MOTION)) el.animate([{ color: '#3BEA7C' }, { color: 'var(--fg-1)' }], { duration: 700, easing: 'ease-out' });
+  }, [st && st.online]);
+
+  const place = () => {
+    const r = btnRef.current && btnRef.current.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 8, left: Math.max(12, Math.min(window.innerWidth - 280, r.left)) });
+  };
+  useEffect(() => {
+    if (!open) return;
+    place();
+    const onKey = e => { if (e.key === 'Escape') { setOpen(false); if (btnRef.current) btnRef.current.focus(); } };
+    const onDown = e => {
+      if (popRef.current && popRef.current.contains(e.target)) return;
+      if (btnRef.current && btnRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onMove = () => place();
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown);
+    window.addEventListener('resize', onMove);
+    window.addEventListener('scroll', onMove, { passive: true });
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('resize', onMove);
+      window.removeEventListener('scroll', onMove);
+    };
+  }, [open]);
+  useEffect(() => { if (open && popRef.current) shellAnimateIn(popRef.current, { y: -4, duration: 180 }); }, [open]);
+
+  if (!P || !st) return null;
+  const h = st.history, lo = Math.min(...h), hi = Math.max(...h), span = Math.max(1, hi - lo);
+  const pts = h.map((v, i) => `${(i / (h.length - 1)) * 240},${30 - ((v - lo) / span) * 26}`).join(' ');
+  const reducedMotion = P.reducedMotion && P.reducedMotion();
+
+  return (
+    <>
+      <button ref={btnRef} type="button" className="sl-online" aria-expanded={open} aria-controls="sl-online-pop"
+        aria-label={`${shellFmt(st.online)} players online. Show details`} onClick={() => setOpen(o => !o)}>
+        <span className="sl-live-dot" aria-hidden="true"/>
+        <span aria-hidden="true"><b ref={numRef}>{shellFmt(st.online)}</b> {short ? 'ONLINE' : 'PLAYERS ONLINE'}</span>
+      </button>
+      {open && pos && ReactDOM.createPortal(
+        <div ref={popRef} id="sl-online-pop" className="sl-online-pop" role="dialog" aria-label="Players online"
+          style={{ top: pos.top, left: pos.left }}>
+          <div>PLAYERS ONLINE</div>
+          <div className="sl-online-big" aria-live="polite">{shellFmt(st.online)} <small>● LIVE</small></div>
+          <svg className="sl-online-spark" viewBox="0 0 240 34" preserveAspectRatio="none" aria-hidden="true">
+            <polyline points={`0,34 ${pts} 240,34`} fill="rgba(59,234,124,0.10)" stroke="none"/>
+            <polyline points={pts} fill="none" stroke="#3BEA7C" strokeWidth="1.5" vectorEffect="non-scaling-stroke"/>
+          </svg>
+          <div className="sl-online-row"><span>ON THIS PAGE</span><b>{shellFmt(st.here)}</b></div>
+          <button type="button" className="sl-online-toggle" role="switch" aria-checked={ghosts && !reducedMotion}
+            disabled={reducedMotion} onClick={() => P.ghosts(!ghosts)}>
+            <span>
+              Ghost cursors
+              <small>{reducedMotion ? 'Off while your device asks for reduced motion.' : 'See where other players are poking around.'}</small>
+            </span>
+            <span className={'sl-switch' + (ghosts && !reducedMotion ? ' is-on' : '')} aria-hidden="true"/>
+          </button>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 function Nav({ cartCount, onCart, route }) {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -249,6 +497,30 @@ function Nav({ cartCount, onCart, route }) {
   const headerRef = useRef(null);
   const burgerRef = useRef(null);
   const panelRef = useRef(null);
+  const navRef = useRef(null);
+  const indRef = useRef(null);
+  const indPlaced = useRef(false);
+  const fridgeBtnRef = useRef(null);
+  const lastCount = useRef(cartCount);
+  // the Fridge button bumps when bottles go in
+  useEffect(() => {
+    const el = fridgeBtnRef.current, up = cartCount > lastCount.current;
+    lastCount.current = cartCount;
+    if (up && el && el.animate && !shellMatches(SHELL_REDUCED_MOTION)) {
+      el.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.1)' }, { transform: 'scale(1)' }], { duration: 320, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
+    }
+  }, [cartCount]);
+
+  // Sliding active indicator: parks under the current page, follows the hovered link.
+  useEffect(() => {
+    if (narrow) { indPlaced.current = false; return; }
+    shellNavIndTo(navRef, indRef, null, !indPlaced.current);
+    indPlaced.current = true;
+    const onResize = () => shellNavIndTo(navRef, indRef, null, true);
+    window.addEventListener('resize', onResize);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [route, narrow]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -314,12 +586,15 @@ function Nav({ cartCount, onCart, route }) {
         padding: '8px 0',
         overflow: 'hidden'
       }}>
-        <div className="container" style={{ display: 'flex', justifyContent: narrow ? 'center' : 'space-between', alignItems: 'center', gap: 24 }}>
+        <div className="container" style={{ display: 'flex', justifyContent: narrow ? 'center' : 'space-between', alignItems: 'center', gap: narrow ? 16 : 24 }}>
+          {narrow && <ShellPresence short/>}
           <span className="mono-sm" style={{ color: 'var(--fg-3)', whiteSpace: 'nowrap' }}>
-            <span aria-hidden="true" style={{ color: 'var(--accent)' }}>●</span>&nbsp;&nbsp;FREE SHIPPING ON ORDERS $40+
+            <span aria-hidden="true" style={{ color: 'var(--accent)' }}>●</span>&nbsp;&nbsp;{compact ? 'FREE SHIP $40+' : 'FREE SHIPPING ON ORDERS $40+'}
           </span>
           {!narrow && (
-            <span className="mono-sm" style={{ color: 'var(--fg-3)', display: 'flex', gap: 16 }}>
+            <span className="mono-sm" style={{ color: 'var(--fg-3)', display: 'flex', gap: 16, alignItems: 'center' }}>
+              <ShellPresence/>
+              <span aria-hidden="true" style={{ opacity: 0.4 }}>|</span>
               <span>SUBSCRIBE → SAVE 28%</span>
               <span aria-hidden="true" style={{ opacity: 0.4 }}>|</span>
               <span>NEW: MANGO + GRAPE</span>
@@ -337,12 +612,14 @@ function Nav({ cartCount, onCart, route }) {
           <Wordmark size={narrow ? 18 : 22}/>
         </a>
         {!narrow && (
-          <nav aria-label="Primary" style={{ display: 'flex', gap: 28 }}>
+          <nav ref={navRef} aria-label="Primary" onMouseLeave={() => shellNavIndTo(navRef, indRef, null)}
+               style={{ display: 'flex', gap: 28, position: 'relative' }}>
             {SHELL_NAV_LINKS.map(l => {
               const active = shellIsActive(l.path, route);
               return (
                 <a key={l.path} href={`#${l.path}`}
                    onClick={go(l.path)}
+                   onMouseEnter={e => shellNavIndTo(navRef, indRef, e.currentTarget)}
                    aria-current={active ? 'page' : undefined}
                    style={{
                      font: '500 14px/1 var(--font-ui)',
@@ -353,7 +630,7 @@ function Nav({ cartCount, onCart, route }) {
                      transition: `color 180ms ${SHELL_EASE_OUT}`
                    }}>
                   {l.label}
-                  {active && (
+                  {active && !window.SLMotion && (
                     <span aria-hidden="true" style={{
                       position: 'absolute', bottom: -2, left: 0, right: 0,
                       height: 2, background: 'var(--accent)',
@@ -363,11 +640,12 @@ function Nav({ cartCount, onCart, route }) {
                 </a>
               );
             })}
+            {window.SLMotion && <span ref={indRef} className="nav-ind" aria-hidden="true"/>}
           </nav>
         )}
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           {!compact && utilityButtons}
-          <button onClick={() => { setMenuOpen(false); onCart(); }} className="btn btn-primary" style={{ padding: '11px 16px', whiteSpace: 'nowrap' }}>
+          <button ref={fridgeBtnRef} onClick={() => { setMenuOpen(false); onCart(); }} className="btn btn-primary" style={{ padding: '11px 16px', whiteSpace: 'nowrap' }}>
             <Icon name="cart" size={16}/>
             <span>Fridge · {cartCount}</span>
           </button>
@@ -424,356 +702,6 @@ function Nav({ cartCount, onCart, route }) {
         </nav>
       )}
     </header>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// CART DRAWER
-// ─────────────────────────────────────────────────────────────
-function ShellCartRow({ item: i, animateIn, onInc, onDec }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    if (animateIn) shellAnimateIn(ref.current);
-  }, []);
-  return (
-    <li ref={ref} style={{
-      display: 'flex', gap: 12, padding: 12,
-      border: '1px solid var(--border-1)', borderRadius: 18,
-      background: 'var(--surface-card)', alignItems: 'center'
-    }}>
-      {/* mini bottle thumbnail (front render: bottle is 70% of the image height, base at 90%) */}
-      <div aria-hidden="true" style={{ width: 48, height: 70, flexShrink: 0, position: 'relative' }}>
-        <img src={`assets/bottle/renders/card-${i.id}.webp`} alt="" width={75} height={100}
-          loading="lazy" decoding="async"
-          style={{ position: 'absolute', left: '50%', top: -20, height: 100, width: 'auto', transform: 'translateX(-50%)' }}/>
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ font: '600 14px var(--font-ui)' }}>{i.name}</div>
-        <div style={{ font: '400 11px var(--font-mono)', color: 'var(--fg-3)', marginTop: 2 }}>${i.price.toFixed(2)}/BOTTLE · {i.sub}</div>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, border: '1px solid var(--border-2)', borderRadius: 999, padding: 3, flexShrink: 0 }}>
-        <button onClick={() => onDec(i.id)} aria-label={`Remove one ${i.name}`} style={{ background: 'transparent', border: 'none', color: 'var(--fg-2)', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 999 }}><Icon name="minus" size={12}/></button>
-        <span style={{ font: '600 12px var(--font-mono)', minWidth: 18, textAlign: 'center' }}>{i.qty}</span>
-        <button onClick={() => onInc(i.id)} aria-label={`Add one ${i.name}`} style={{ background: 'transparent', border: 'none', color: 'var(--accent)', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 999 }}><Icon name="plus" size={12}/></button>
-      </div>
-    </li>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// PAYPAL (sandbox) CHECKOUT
-// The browser only ever sends flavor ids + quantities. /api/paypal/orders prices the
-// cart on the server and creates the PayPal order; /api/paypal/capture captures it.
-// ─────────────────────────────────────────────────────────────
-let shellPayPalPromise = null;
-
-function shellLoadScript(src) {
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = src;
-    s.async = true;
-    s.onload = resolve;
-    s.onerror = () => reject(new Error('PayPal script failed to load'));
-    document.head.appendChild(s);
-  });
-}
-
-// Loads config + the PayPal v6 web SDK once per page; resolves to { sdk, env }.
-function shellLoadPayPal() {
-  if (shellPayPalPromise) return shellPayPalPromise;
-  shellPayPalPromise = (async () => {
-    const res = await fetch('/api/paypal/config');
-    if (!res.ok) throw Object.assign(new Error('Checkout is not configured'), { unavailable: true });
-    const { clientId, env } = await res.json();
-    const host = env === 'live' ? 'https://www.paypal.com' : 'https://www.sandbox.paypal.com';
-    if (!window.paypal || !window.paypal.createInstance) await shellLoadScript(`${host}/web-sdk/v6/core`);
-    const sdk = await window.paypal.createInstance({ clientId, components: ['paypal-payments'], pageType: 'cart' });
-    const methods = await sdk.findEligibleMethods({ currencyCode: 'USD' });
-    if (!methods.isEligible('paypal')) throw Object.assign(new Error('PayPal is not available here'), { unavailable: true });
-    return { sdk, env };
-  })();
-  // Let a later open retry after a failure.
-  shellPayPalPromise.catch(() => { shellPayPalPromise = null; });
-  return shellPayPalPromise;
-}
-
-async function shellPostJson(url, body) {
-  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
-  return data;
-}
-
-// status: idle | loading | ready | paying | capturing | paid | cancelled | error | failed (SDK load) | unavailable
-function useShellPayPal({ active, items, onPaid }) {
-  const [state, setState] = useState({ status: 'idle', env: null, message: '', receipt: null });
-  const sessionRef = useRef(null);
-  const itemsRef = useRef(items);
-  itemsRef.current = items;
-  const onPaidRef = useRef(onPaid);
-  onPaidRef.current = onPaid;
-
-  useEffect(() => {
-    if (!active || sessionRef.current) return;
-    let alive = true;
-    setState(s => ({ ...s, status: 'loading', message: '' }));
-    shellLoadPayPal().then(({ sdk, env }) => {
-      if (!alive) return;
-      sessionRef.current = sdk.createPayPalOneTimePaymentSession({
-        onApprove: async data => {
-          setState(s => ({ ...s, status: 'capturing', message: '' }));
-          try {
-            const r = await shellPostJson('/api/paypal/capture', { orderId: data.orderId });
-            if (r.status !== 'COMPLETED') throw new Error(`Payment ${String(r.status || 'not completed').toLowerCase()}`);
-            setState(s => ({ ...s, status: 'paid', receipt: r, message: '' }));
-            if (onPaidRef.current) onPaidRef.current(r);
-          } catch (e) {
-            setState(s => ({ ...s, status: 'error', message: e.message || 'Payment could not be captured' }));
-          }
-        },
-        onCancel: () => setState(s => ({ ...s, status: 'cancelled', message: 'Payment cancelled. Your fridge is still stocked.' })),
-        onError: () => setState(s => ({ ...s, status: 'error', message: 'PayPal hit an error. Try again.' })),
-      });
-      setState(s => ({ ...s, status: 'ready', env }));
-    }).catch(e => {
-      if (!alive) return;
-      setState(s => ({ ...s, status: e.unavailable ? 'unavailable' : 'failed',
-        message: e.unavailable ? 'Checkout is offline on this host' : 'PayPal failed to load. Reopen the cart to retry.' }));
-    });
-    return () => { alive = false; };
-  }, [active]);
-
-  // Called straight from the click handler so the PayPal popup isn't blocked.
-  const start = () => {
-    const session = sessionRef.current;
-    if (!session) return;
-    setState(s => ({ ...s, status: 'paying', message: '', receipt: null }));
-    const lines = itemsRef.current.map(i => ({ id: i.id, qty: i.qty, subscription: i.subscription || undefined }));
-    const orderPromise = shellPostJson('/api/paypal/orders', { items: lines })
-      .then(d => ({ orderId: d.orderId }))
-      .catch(e => {
-        setState(s => ({ ...s, status: 'error', message: e.message || 'Could not start checkout' }));
-        throw e;
-      });
-    Promise.resolve(session.start({ presentationMode: 'auto' }, orderPromise)).catch(() => {});
-  };
-
-  return { ...state, start };
-}
-
-function CartDrawer({ open, items, onClose, onInc, onDec, total, onPaid }) {
-  const panelRef = useRef(null);
-  const closeRef = useRef(null);
-  const returnFocusRef = useRef(null);
-  const mountedRef = useRef(false);
-  const reduced = shellUseMedia(SHELL_REDUCED_MOTION);
-  const pay = useShellPayPal({ active: open && items.length > 0, items, onPaid });
-  // Latest onClose without re-binding the key listener on every App render.
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-
-  // Rows present on first render don't animate; rows added later do.
-  useEffect(() => { mountedRef.current = true; }, []);
-
-  // `inert` isn't a known prop in React 18 — set it on the node directly.
-  React.useLayoutEffect(() => {
-    if (panelRef.current) panelRef.current.inert = !open;
-  }, [open]);
-
-  // Focus: into the close button on open, back to the opener on close.
-  useEffect(() => {
-    if (open) {
-      returnFocusRef.current = document.activeElement;
-      const focusClose = () => { if (closeRef.current) closeRef.current.focus({ preventScroll: true }); };
-      focusClose();
-      // Descendants with their own (global) transitions can inherit `visibility: hidden`
-      // for one more frame; retry once so focus still lands in the dialog.
-      if (document.activeElement === closeRef.current) return;
-      const raf = requestAnimationFrame(() => requestAnimationFrame(focusClose));
-      return () => cancelAnimationFrame(raf);
-    }
-    const el = returnFocusRef.current;
-    returnFocusRef.current = null;
-    if (el && el !== document.body && document.contains(el) && typeof el.focus === 'function') {
-      el.focus({ preventScroll: true });
-    }
-  }, [open]);
-
-  // Escape closes; Tab stays inside the dialog while it is open.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = e => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onCloseRef.current();
-        return;
-      }
-      if (e.key !== 'Tab' || !panelRef.current) return;
-      const nodes = Array.from(panelRef.current.querySelectorAll(SHELL_FOCUSABLE));
-      if (!nodes.length) return;
-      const first = nodes[0], last = nodes[nodes.length - 1];
-      const inside = panelRef.current.contains(document.activeElement);
-      if (e.shiftKey && (document.activeElement === first || !inside)) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && (document.activeElement === last || !inside)) { e.preventDefault(); first.focus(); }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open]);
-
-  // Modal: keep the page behind it from scrolling while open.
-  useEffect(() => {
-    if (!open) return;
-    const body = document.body;
-    const gutter = window.innerWidth - document.documentElement.clientWidth;
-    const prev = { overflow: body.style.overflow, paddingRight: body.style.paddingRight };
-    body.style.overflow = 'hidden';
-    if (gutter > 0) body.style.paddingRight = `${gutter}px`;
-    return () => {
-      body.style.overflow = prev.overflow;
-      body.style.paddingRight = prev.paddingRight;
-    };
-  }, [open]);
-
-  const inMs = reduced ? 200 : 400;
-  const outMs = reduced ? 200 : 260;
-  const dur = open ? inMs : outMs;
-  const ease = reduced ? SHELL_EASE_OUT : SHELL_EASE_DRAWER;
-  const visibilityT = `visibility 0s linear ${open ? 0 : dur}ms`;
-  // Subscription orders always ship free (see FAQ); one-off orders need $40+.
-  const freeShip = total >= 40 || items.some(i => i.subscription);
-  const progress = Math.min(1, total / 40);
-
-  const browse = () => {
-    // The opener may belong to the page we're leaving; only restore focus to persistent chrome.
-    const el = returnFocusRef.current;
-    if (el && !(el.closest && el.closest('header'))) returnFocusRef.current = null;
-    onClose();
-    navTo('/');
-  };
-
-  return (
-    // Fixed, clipped layer: the off-canvas panel never widens the page's scroll area.
-    // `visibility` lives here (hidden only after the exit transition) and is inherited.
-    <div style={{
-      position: 'fixed', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 100,
-      visibility: open ? 'visible' : 'hidden',
-      transition: visibilityT
-    }}>
-      <div onClick={onClose} aria-hidden="true" style={{
-        position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
-        opacity: open ? 1 : 0, pointerEvents: open ? 'auto' : 'none',
-        transition: `opacity ${dur}ms ${ease}`
-      }}/>
-      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="shell-cart-title" style={{
-        position: 'absolute', top: 0, right: 0, bottom: 0, width: 460,
-        maxWidth: '100%', boxSizing: 'border-box', pointerEvents: open ? 'auto' : 'none',
-        background: 'var(--ink-800)', borderLeft: '1px solid var(--border-2)',
-        padding: 'clamp(20px, 5vw, 28px)', display: 'flex', flexDirection: 'column',
-        transform: reduced || open ? 'translateX(0)' : 'translateX(100%)',
-        opacity: reduced && !open ? 0 : 1,
-        transition: reduced ? `opacity ${dur}ms ${ease}` : `transform ${dur}ms ${ease}`,
-        boxShadow: '-30px 0 80px rgba(0,0,0,0.6)'
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <div>
-            <span className="mono-sm" style={{ color: 'var(--accent)' }}>MY FRIDGE</span>
-            <h2 id="shell-cart-title" className="h2" style={{ marginTop: 4, fontSize: 28 }}>Inventory</h2>
-          </div>
-          <button ref={closeRef} onClick={onClose} className="iconbtn" aria-label="Close cart"
-                  style={{ transition: `color 200ms ${SHELL_EASE_OUT}, border-color 200ms ${SHELL_EASE_OUT}` }}>
-            <Icon name="x"/>
-          </button>
-        </div>
-
-        {/* HUD bar */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '8px 12px',
-          background: 'var(--ink-900)',
-          border: '1px solid var(--border-1)',
-          borderRadius: 12,
-          margin: '20px 0 16px',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 11,
-          letterSpacing: '0.08em',
-          color: 'var(--fg-3)'
-        }}>
-          <span aria-hidden="true" className="dot" style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)', flexShrink: 0 }}/>
-          <span>STATUS: {items.length ? 'STOCKED' : 'EMPTY'} · {items.reduce((s, i) => s + i.qty, 0)} BOTTLES QUEUED</span>
-        </div>
-
-        <div className="thin-scroll" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-          {items.length === 0 ? (
-            <div style={{
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
-              padding: '40px 24px', textAlign: 'center',
-              border: '1px dashed var(--border-2)', borderRadius: 18
-            }}>
-              <span aria-hidden="true" style={{
-                width: 48, height: 48, borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'var(--accent-soft)', color: 'var(--accent)'
-              }}>
-                <Icon name="cart" size={20}/>
-              </span>
-              <span className="mono-sm" style={{ color: 'var(--accent)' }}>SLOT EMPTY</span>
-              <div style={{ font: '600 18px/1.3 var(--font-ui)', color: 'var(--fg-1)' }}>Nothing in your fridge yet.</div>
-              <div style={{ font: '400 14px/1.5 var(--font-body)', color: 'var(--fg-3)' }}>Let's fix that.</div>
-              <button onClick={browse} className="btn btn-primary" style={{ marginTop: 8 }}>
-                Browse flavors <Icon name="arrowR" size={16}/>
-              </button>
-            </div>
-          ) : (
-            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {items.map(i => (
-                <ShellCartRow key={i.id} item={i} animateIn={mountedRef.current} onInc={onInc} onDec={onDec}/>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div style={{ borderTop: '1px solid var(--border-1)', paddingTop: 20, marginTop: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-            <span style={{ font: '500 14px var(--font-body)', color: 'var(--fg-2)' }}>Subtotal</span>
-            <span style={{ font: '700 22px var(--font-mono)', color: 'var(--accent)' }}>${total.toFixed(2)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, font: '400 12px var(--font-mono)', color: 'var(--fg-3)', letterSpacing: '0.04em' }}>
-            <span>SHIPPING</span>
-            <span>{freeShip ? 'FREE' : `$${(40 - total).toFixed(2)} TO FREE`}</span>
-          </div>
-          {!freeShip && (
-            <div aria-hidden="true" style={{ background: 'var(--ink-900)', borderRadius: 999, height: 4, overflow: 'hidden', marginBottom: 16 }}>
-              <div style={{
-                width: '100%', height: '100%', background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)',
-                transform: `scaleX(${progress})`, transformOrigin: 'left',
-                transition: `transform 220ms ${SHELL_EASE_OUT}`
-              }}/>
-            </div>
-          )}
-          <button className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center' }}
-                  disabled={items.length === 0 || !['ready', 'cancelled', 'error', 'paid'].includes(pay.status)}
-                  aria-busy={['loading', 'paying', 'capturing'].includes(pay.status)}
-                  onClick={pay.start}>
-            {pay.status === 'loading' ? 'Loading PayPal…'
-              : pay.status === 'paying' ? 'Waiting for PayPal…'
-              : pay.status === 'capturing' ? 'Confirming payment…'
-              : pay.status === 'unavailable' || pay.status === 'failed' ? 'Checkout offline'
-              : <>Pay with PayPal · ${total.toFixed(2)}</>}
-          </button>
-          <div role="status" aria-live="polite" style={{
-            font: '500 12px var(--font-mono)', color: pay.status === 'paid' ? 'var(--accent)' : 'var(--fg-2)',
-            textAlign: 'center', letterSpacing: '0.04em',
-            marginTop: pay.message || pay.status === 'paid' ? 10 : 0
-          }}>
-            {pay.status === 'paid' && pay.receipt
-              ? `PAID $${pay.receipt.amount} · ORDER ${pay.receipt.orderId}`
-              : pay.message}
-          </div>
-          <div style={{ font: '400 11px var(--font-mono)', color: 'var(--fg-4)', textAlign: 'center', marginTop: 12, letterSpacing: '0.06em' }}>
-            {pay.env === 'sandbox' ? 'PAYPAL SANDBOX · TEST MONEY ONLY' : 'SECURE · 30-DAY GUARANTEE · CANCEL ANYTIME'}
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -953,6 +881,6 @@ function PageBottomCTA({ onAdd, label = "Add to fridge", price = "$2.50/bottle" 
 // EXPORT to window
 // ─────────────────────────────────────────────────────────────
 Object.assign(window, {
-  Icon, Wordmark, Nav, CartDrawer, Footer, Can, PageBottomCTA,
-  useFlavorTheme, useCart, useRoute, navTo, FLAVORS,
+  Icon, Wordmark, Nav, Footer, Can, PageBottomCTA,
+  useFlavorTheme, useCart, useRoute, useRouteStage, navTo, FLAVORS, useShellPayPal,
 });

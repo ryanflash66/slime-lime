@@ -22,11 +22,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"/>
-<!-- Al Fresco (Adobe Fonts kit ooz0jtv) + Slime Lime typography kit -->
-<link rel="preconnect" href="https://use.typekit.net" crossorigin/>
-<link rel="stylesheet" href="https://use.typekit.net/ooz0jtv.css"/>
 <link rel="stylesheet" href="colors_and_type.css"/>
-<link rel="stylesheet" href="slime-type.css"/>
 <link rel="stylesheet" href="site.css"/>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"}}</script>
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js" crossorigin="anonymous"/>
@@ -39,19 +35,33 @@
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 
-<script src="slime-display.js" defer></script>
+<!-- GSAP 3.13 (ScrollTrigger + ScrollToPlugin) + Slime Lime motion layer -->
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js" integrity="sha384-HOvlOYPIs/zjoIkWUGXkVmXsjr8GuZLV+Q+rcPwmJOVZVpvTSXQChiN4t9Euv9Vc" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrollTrigger.min.js" integrity="sha384-P8VzCVnT9NBUkMrpcIZrJbA7EBjJvh/fJS6PmP+4nLIM284DtsImIv8D0fFjIkeh" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrollToPlugin.min.js" integrity="sha384-dUEYjN2xd8Wk4WIZYrCpK7Ww7+r/LVtVebVp8skuwm9bKGoVo2bZrWuA79w8TI+v" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/SplitText.min.js" integrity="sha384-xb96EMJeax+NLXMC88ZBa1xAeAW+kn+horHh/zFlbMLG2UPWhMJJSlv7fi57hS+Q" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrambleTextPlugin.min.js" integrity="sha384-QsPhgdP78a1erQNT34dj/oyh7uPCXUnT/FkptUa/56LnSGsbTBmdiAOfB7j+8K4A" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/MotionPathPlugin.min.js" integrity="sha384-ZdcNM4JVCcTz+LG7hy3tkzchm/ljdYJcwthjW8G4vqAXApMm4ve+3ByX+RfrAlFt" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/Physics2DPlugin.min.js" integrity="sha384-pJ0BQo7Hj3l3RJkVnnsS/Zx1yIyxLtrDhu/TBj0JZK92Odxbh+St8qOFvj2EMdit" crossorigin="anonymous"></script>
+<script src="motion.js"></script>
+<script src="game.js"></script>
+<script src="presence.js"></script>
 <script type="module" src="bottle3d.js"></script>
 <script type="text/babel" src="shell.jsx"></script>
+<script type="text/babel" src="fridge.jsx"></script>
 <script type="text/babel" src="home.jsx"></script>
 <script type="text/babel" src="flagship.jsx"></script>
 <script type="text/babel" src="subscribe.jsx"></script>
 <script type="text/babel" src="story-faq.jsx"></script>
 
 <script type="text/babel">
-const { useState: useStateApp, useEffect: useEffectApp } = React;
+const { useState: useStateApp, useEffect: useEffectApp, useRef: useRefApp } = React;
 
 function App() {
-  const route = window.useRoute();
+  const url = window.useRoute();
+  const pageRef = useRefApp(null);
+  // The page on screen lags the URL while the GSAP curtain covers the swap.
+  const route = window.useRouteStage(url, pageRef);
   const cart = window.useCart();
   const [flavor, setFlavor] = useStateApp(window.FLAVORS[0]);
   // The flagship PDP is always Lemon-Lime, whatever flavor is picked on Home.
@@ -66,13 +76,14 @@ function App() {
 
   return (
     <div>
-      <window.Nav cartCount={cart.count} onCart={() => cart.setCartOpen(true)} route={route}/>
-      {page}
+      <window.Nav cartCount={cart.count} onCart={() => cart.setCartOpen(true)} route={url}/>
+      <div ref={pageRef}>{page}</div>
       <window.Footer/>
-      <window.CartDrawer
+      <window.FridgeDrawer
         open={cart.cartOpen}
         items={cart.cart}
         onClose={() => cart.setCartOpen(false)}
+        onSetQty={cart.setQty}
         onInc={cart.inc}
         onDec={cart.dec}
         total={cart.total}
