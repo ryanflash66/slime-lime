@@ -197,7 +197,7 @@
     movers.delete(el);
     gsap.to(el, { '--tx': '0deg', '--ty': '0deg', '--ga': 0, duration: 0.8, ease: 'power3.out', overwrite: true });
   }
-  document.addEventListener('pointerleave', function () {
+  document.documentElement.addEventListener('mouseleave', function () {
     if (activeMagnet) { release(activeMagnet, ['--mx', '--my'], 'elastic.out(1, 0.4)'); activeMagnet = null; }
     if (activeTilt) { releaseTilt(activeTilt); activeTilt = null; }
   });
