@@ -1,5 +1,5 @@
 /* global React */
-// Shared shell: Nav, Footer, CartDrawer, Icon, Wordmark, AppCtx (cart + theme)
+// Shared shell: Nav, Footer, Icon, Wordmark, cart hook + theme (the cart UI is fridge.jsx)
 const { useState, useEffect, useRef, useMemo, createContext, useContext } = React;
 
 // ─────────────────────────────────────────────────────────────
@@ -127,12 +127,18 @@ function useCart() {
     setCartOpen(true);
   };
   const remove = id => setCart(c => c.filter(i => i.id !== id));
+  // Fridge close-up: set a flavor's exact count (0 clears the slot) without reopening anything.
+  const setQty = (f, qty) => setCart(c => {
+    if (qty <= 0) return c.filter(i => i.id !== f.id);
+    if (c.some(i => i.id === f.id)) return c.map(i => i.id === f.id ? { ...i, qty } : i);
+    return [...c, { ...f, qty }];
+  });
   const inc = id => setCart(c => c.map(i => i.id === id ? { ...i, qty: i.qty + 1 } : i));
   const dec = id => setCart(c => c.map(i => i.id === id ? { ...i, qty: Math.max(0, i.qty - 1) } : i).filter(i => i.qty > 0));
   const count = cart.reduce((s, i) => s + i.qty, 0);
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
-  return { cart, count, total, add, replaceSubscription, inc, dec, remove, cartOpen, setCartOpen };
+  return { cart, count, total, add, replaceSubscription, inc, dec, remove, setQty, cartOpen, setCartOpen };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -391,6 +397,16 @@ function Nav({ cartCount, onCart, route }) {
   const navRef = useRef(null);
   const indRef = useRef(null);
   const indPlaced = useRef(false);
+  const fridgeBtnRef = useRef(null);
+  const lastCount = useRef(cartCount);
+  // the Fridge button bumps when bottles go in
+  useEffect(() => {
+    const el = fridgeBtnRef.current, up = cartCount > lastCount.current;
+    lastCount.current = cartCount;
+    if (up && el && el.animate && !shellMatches(SHELL_REDUCED_MOTION)) {
+      el.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.1)' }, { transform: 'scale(1)' }], { duration: 320, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
+    }
+  }, [cartCount]);
 
   // Sliding active indicator: parks under the current page, follows the hovered link.
   useEffect(() => {
@@ -526,7 +542,7 @@ function Nav({ cartCount, onCart, route }) {
         )}
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           {!compact && utilityButtons}
-          <button onClick={() => { setMenuOpen(false); onCart(); }} className="btn btn-primary" style={{ padding: '11px 16px', whiteSpace: 'nowrap' }}>
+          <button ref={fridgeBtnRef} onClick={() => { setMenuOpen(false); onCart(); }} className="btn btn-primary" style={{ padding: '11px 16px', whiteSpace: 'nowrap' }}>
             <Icon name="cart" size={16}/>
             <span>Fridge · {cartCount}</span>
           </button>
@@ -583,248 +599,6 @@ function Nav({ cartCount, onCart, route }) {
         </nav>
       )}
     </header>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// CART DRAWER
-// ─────────────────────────────────────────────────────────────
-function ShellCartRow({ item: i, animateIn, onInc, onDec }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    if (animateIn) shellAnimateIn(ref.current);
-  }, []);
-  return (
-    <li ref={ref} style={{
-      display: 'flex', gap: 12, padding: 12,
-      border: '1px solid var(--border-1)', borderRadius: 18,
-      background: 'var(--surface-card)', alignItems: 'center'
-    }}>
-      {/* mini bottle thumbnail (front render: bottle is 70% of the image height, base at 90%) */}
-      <div aria-hidden="true" style={{ width: 48, height: 70, flexShrink: 0, position: 'relative' }}>
-        <img src={`assets/bottle/renders/card-${i.id}.webp`} alt="" width={75} height={100}
-          loading="lazy" decoding="async"
-          style={{ position: 'absolute', left: '50%', top: -20, height: 100, width: 'auto', transform: 'translateX(-50%)' }}/>
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ font: '600 14px var(--font-ui)' }}>{i.name}</div>
-        <div style={{ font: '400 11px var(--font-mono)', color: 'var(--fg-3)', marginTop: 2 }}>${i.price.toFixed(2)}/BOTTLE · {i.sub}</div>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, border: '1px solid var(--border-2)', borderRadius: 999, padding: 3, flexShrink: 0 }}>
-        <button onClick={() => onDec(i.id)} aria-label={`Remove one ${i.name}`} style={{ background: 'transparent', border: 'none', color: 'var(--fg-2)', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 999 }}><Icon name="minus" size={12}/></button>
-        <span style={{ font: '600 12px var(--font-mono)', minWidth: 18, textAlign: 'center' }}>{i.qty}</span>
-        <button onClick={() => onInc(i.id)} aria-label={`Add one ${i.name}`} style={{ background: 'transparent', border: 'none', color: 'var(--accent)', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', borderRadius: 999 }}><Icon name="plus" size={12}/></button>
-      </div>
-    </li>
-  );
-}
-
-function CartDrawer({ open, items, onClose, onInc, onDec, total }) {
-  const panelRef = useRef(null);
-  const closeRef = useRef(null);
-  const returnFocusRef = useRef(null);
-  const mountedRef = useRef(false);
-  const [checkoutNote, setCheckoutNote] = useState(false);
-  const reduced = shellUseMedia(SHELL_REDUCED_MOTION);
-  // Latest onClose without re-binding the key listener on every App render.
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-
-  // Rows present on first render don't animate; rows added later do.
-  useEffect(() => { mountedRef.current = true; }, []);
-
-  // `inert` isn't a known prop in React 18 — set it on the node directly.
-  React.useLayoutEffect(() => {
-    if (panelRef.current) panelRef.current.inert = !open;
-  }, [open]);
-
-  // Focus: into the close button on open, back to the opener on close.
-  useEffect(() => {
-    if (open) {
-      returnFocusRef.current = document.activeElement;
-      const focusClose = () => { if (closeRef.current) closeRef.current.focus({ preventScroll: true }); };
-      focusClose();
-      // Descendants with their own (global) transitions can inherit `visibility: hidden`
-      // for one more frame; retry once so focus still lands in the dialog.
-      if (document.activeElement === closeRef.current) return;
-      const raf = requestAnimationFrame(() => requestAnimationFrame(focusClose));
-      return () => cancelAnimationFrame(raf);
-    }
-    setCheckoutNote(false);
-    const el = returnFocusRef.current;
-    returnFocusRef.current = null;
-    if (el && el !== document.body && document.contains(el) && typeof el.focus === 'function') {
-      el.focus({ preventScroll: true });
-    }
-  }, [open]);
-
-  // Escape closes; Tab stays inside the dialog while it is open.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = e => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onCloseRef.current();
-        return;
-      }
-      if (e.key !== 'Tab' || !panelRef.current) return;
-      const nodes = Array.from(panelRef.current.querySelectorAll(SHELL_FOCUSABLE));
-      if (!nodes.length) return;
-      const first = nodes[0], last = nodes[nodes.length - 1];
-      const inside = panelRef.current.contains(document.activeElement);
-      if (e.shiftKey && (document.activeElement === first || !inside)) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && (document.activeElement === last || !inside)) { e.preventDefault(); first.focus(); }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open]);
-
-  // Modal: keep the page behind it from scrolling while open.
-  useEffect(() => {
-    if (!open) return;
-    const body = document.body;
-    const gutter = window.innerWidth - document.documentElement.clientWidth;
-    const prev = { overflow: body.style.overflow, paddingRight: body.style.paddingRight };
-    body.style.overflow = 'hidden';
-    if (gutter > 0) body.style.paddingRight = `${gutter}px`;
-    return () => {
-      body.style.overflow = prev.overflow;
-      body.style.paddingRight = prev.paddingRight;
-    };
-  }, [open]);
-
-  const inMs = reduced ? 200 : 400;
-  const outMs = reduced ? 200 : 260;
-  const dur = open ? inMs : outMs;
-  const ease = reduced ? SHELL_EASE_OUT : SHELL_EASE_DRAWER;
-  const visibilityT = `visibility 0s linear ${open ? 0 : dur}ms`;
-  // Subscription orders always ship free (see FAQ); one-off orders need $40+.
-  const freeShip = total >= 40 || items.some(i => i.subscription);
-  const progress = Math.min(1, total / 40);
-
-  const browse = () => {
-    // The opener may belong to the page we're leaving; only restore focus to persistent chrome.
-    const el = returnFocusRef.current;
-    if (el && !(el.closest && el.closest('header'))) returnFocusRef.current = null;
-    onClose();
-    navTo('/');
-  };
-
-  return (
-    // Fixed, clipped layer: the off-canvas panel never widens the page's scroll area.
-    // `visibility` lives here (hidden only after the exit transition) and is inherited.
-    <div style={{
-      position: 'fixed', inset: 0, overflow: 'hidden', pointerEvents: 'none', zIndex: 100,
-      visibility: open ? 'visible' : 'hidden',
-      transition: visibilityT
-    }}>
-      <div onClick={onClose} aria-hidden="true" style={{
-        position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
-        opacity: open ? 1 : 0, pointerEvents: open ? 'auto' : 'none',
-        transition: `opacity ${dur}ms ${ease}`
-      }}/>
-      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="shell-cart-title" style={{
-        position: 'absolute', top: 0, right: 0, bottom: 0, width: 460,
-        maxWidth: '100%', boxSizing: 'border-box', pointerEvents: open ? 'auto' : 'none',
-        background: 'var(--ink-800)', borderLeft: '1px solid var(--border-2)',
-        padding: 'clamp(20px, 5vw, 28px)', display: 'flex', flexDirection: 'column',
-        transform: reduced || open ? 'translateX(0)' : 'translateX(100%)',
-        opacity: reduced && !open ? 0 : 1,
-        transition: reduced ? `opacity ${dur}ms ${ease}` : `transform ${dur}ms ${ease}`,
-        boxShadow: '-30px 0 80px rgba(0,0,0,0.6)'
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <div>
-            <span className="mono-sm" style={{ color: 'var(--accent)' }}>MY FRIDGE</span>
-            <h2 id="shell-cart-title" className="h2" style={{ marginTop: 4, fontSize: 28 }}>Inventory</h2>
-          </div>
-          <button ref={closeRef} onClick={onClose} className="iconbtn" aria-label="Close cart"
-                  style={{ transition: `color 200ms ${SHELL_EASE_OUT}, border-color 200ms ${SHELL_EASE_OUT}` }}>
-            <Icon name="x"/>
-          </button>
-        </div>
-
-        {/* HUD bar */}
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '8px 12px',
-          background: 'var(--ink-900)',
-          border: '1px solid var(--border-1)',
-          borderRadius: 12,
-          margin: '20px 0 16px',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 11,
-          letterSpacing: '0.08em',
-          color: 'var(--fg-3)'
-        }}>
-          <span aria-hidden="true" className="dot" style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)', flexShrink: 0 }}/>
-          <span>STATUS: {items.length ? 'STOCKED' : 'EMPTY'} · {items.reduce((s, i) => s + i.qty, 0)} BOTTLES QUEUED</span>
-        </div>
-
-        <div className="thin-scroll" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-          {items.length === 0 ? (
-            <div style={{
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12,
-              padding: '40px 24px', textAlign: 'center',
-              border: '1px dashed var(--border-2)', borderRadius: 18
-            }}>
-              <span aria-hidden="true" style={{
-                width: 48, height: 48, borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'var(--accent-soft)', color: 'var(--accent)'
-              }}>
-                <Icon name="cart" size={20}/>
-              </span>
-              <span className="mono-sm" style={{ color: 'var(--accent)' }}>SLOT EMPTY</span>
-              <div style={{ font: '600 18px/1.3 var(--font-ui)', color: 'var(--fg-1)' }}>Nothing in your fridge yet.</div>
-              <div style={{ font: '400 14px/1.5 var(--font-body)', color: 'var(--fg-3)' }}>Let's fix that.</div>
-              <button onClick={browse} className="btn btn-primary" style={{ marginTop: 8 }}>
-                Browse flavors <Icon name="arrowR" size={16}/>
-              </button>
-            </div>
-          ) : (
-            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {items.map(i => (
-                <ShellCartRow key={i.id} item={i} animateIn={mountedRef.current} onInc={onInc} onDec={onDec}/>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div style={{ borderTop: '1px solid var(--border-1)', paddingTop: 20, marginTop: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-            <span style={{ font: '500 14px var(--font-body)', color: 'var(--fg-2)' }}>Subtotal</span>
-            <span style={{ font: '700 22px var(--font-mono)', color: 'var(--accent)' }}>${total.toFixed(2)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, font: '400 12px var(--font-mono)', color: 'var(--fg-3)', letterSpacing: '0.04em' }}>
-            <span>SHIPPING</span>
-            <span>{freeShip ? 'FREE' : `$${(40 - total).toFixed(2)} TO FREE`}</span>
-          </div>
-          {!freeShip && (
-            <div aria-hidden="true" style={{ background: 'var(--ink-900)', borderRadius: 999, height: 4, overflow: 'hidden', marginBottom: 16 }}>
-              <div style={{
-                width: '100%', height: '100%', background: 'var(--accent)', boxShadow: '0 0 8px var(--accent-glow)',
-                transform: `scaleX(${progress})`, transformOrigin: 'left',
-                transition: `transform 220ms ${SHELL_EASE_OUT}`
-              }}/>
-            </div>
-          )}
-          <button className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center' }}
-                  disabled={items.length === 0}
-                  onClick={() => setCheckoutNote(true)}>
-            Checkout · ${total.toFixed(2)}
-          </button>
-          <div role="status" aria-live="polite" style={{
-            font: '500 12px var(--font-mono)', color: 'var(--fg-2)', textAlign: 'center', letterSpacing: '0.04em',
-            marginTop: checkoutNote ? 10 : 0
-          }}>
-            {checkoutNote ? 'Demo store — checkout is disabled' : ''}
-          </div>
-          <div style={{ font: '400 11px var(--font-mono)', color: 'var(--fg-4)', textAlign: 'center', marginTop: 12, letterSpacing: '0.06em' }}>
-            SECURE · 30-DAY GUARANTEE · CANCEL ANYTIME
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -1004,6 +778,6 @@ function PageBottomCTA({ onAdd, label = "Add to fridge", price = "$2.50/bottle" 
 // EXPORT to window
 // ─────────────────────────────────────────────────────────────
 Object.assign(window, {
-  Icon, Wordmark, Nav, CartDrawer, Footer, Can, PageBottomCTA,
+  Icon, Wordmark, Nav, Footer, Can, PageBottomCTA,
   useFlavorTheme, useCart, useRoute, useRouteStage, navTo, FLAVORS,
 });

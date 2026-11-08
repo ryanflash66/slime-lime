@@ -132,6 +132,11 @@ function liquidMaterial(juice, node) {
   return mat;
 }
 
+// opts.exclusive: while such an instance is alive (e.g. the fridge close-up), the others stop
+// rendering so two WebGL stages never run at once.
+const instances = new Set(), exclusives = new Set();
+const othersPaused = self => exclusives.size > 0 && !exclusives.has(self);
+
 // ── Public API ─────────────────────────────────────────────────
 function create(gltf, container, opts = {}) {
   const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -506,7 +511,10 @@ function create(gltf, container, opts = {}) {
     if (dirty) { renderer.render(scene, camera); dirty = false; }
     if (!reduced || spinStart >= 0 || fadeStart >= 0 || slideStart >= 0 || settling || drag) loop();
   };
-  const loop = () => { if (!raf && visible && !document.hidden) raf = requestAnimationFrame(tick); };
+  const self = { wake: () => { dirty = true; loop(); } };
+  const loop = () => { if (!raf && visible && !document.hidden && !othersPaused(self)) raf = requestAnimationFrame(tick); };
+  instances.add(self);
+  if (opts.exclusive) exclusives.add(self);
 
   let destroyed = false;
   paint();
@@ -552,6 +560,8 @@ function create(gltf, container, opts = {}) {
     },
     destroy() {
       destroyed = true;
+      instances.delete(self);
+      if (exclusives.delete(self)) instances.forEach(i => i.wake());
       cancelAnimationFrame(raf); ro.disconnect(); if (io) io.disconnect();
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('pointermove', onPointer);
