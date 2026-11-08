@@ -63,6 +63,25 @@ Hash-based routing — refresh-safe, no server config required.
 - **Reactive hero.** `Hero` in `home.jsx` tracks cursor position to morph a slime blob, tilt the bottle, render a video-game targeting reticle with X/Y HUD readout, and spawn drip splashes on click.
 - **Scroll story.** `ScrollStory` reads scroll progress against a 300vh container to drive a sticky 3-act sequence.
 
+## PayPal sandbox checkout
+
+The cart's **Pay with PayPal** button runs a real PayPal **sandbox** checkout (test money only).
+
+- `api/paypal/config.js`: GET, returns the public client ID and environment.
+- `api/paypal/orders.js`: POST `{ items: [{ id, qty, subscription? }] }`. Prices the cart **on the server** (`api/_lib/catalog.js`) and creates a PayPal Orders v2 order. Client-sent prices are ignored.
+- `api/paypal/capture.js`: POST `{ orderId }`, captures the approved order.
+- Browser side uses the PayPal JS SDK v6 (`useShellPayPal` in `shell.jsx`).
+
+Set these in Vercel (Project, Settings, Environment Variables), never in code:
+
+| Name | Value |
+|---|---|
+| `PAYPAL_CLIENT_ID` | Sandbox app client ID |
+| `PAYPAL_CLIENT_SECRET` | Sandbox app secret |
+| `PAYPAL_ENV` | optional, `sandbox` (default) or `live` |
+
+Keep `api/_lib/catalog.js` prices in sync with `FLAVORS` in `shell.jsx`. A plain static server (`python -m http.server`) has no `/api`, so the button shows "Checkout offline" there; use a Vercel preview or `vercel dev`.
+
 ## Deploy
 
 Auto-deploys to Vercel on push to `main`. Production alias: **slime-lime-eta.vercel.app**.
@@ -74,4 +93,4 @@ For manual deploys: `vercel --prod` from the project root.
 - React 18 (CDN, dev build — design-prototype runtime)
 - Babel-standalone for in-browser JSX
 - Vanilla CSS with custom properties (no framework)
-- Static hosting on Vercel
+- Static hosting on Vercel, plus Node serverless functions in `api/` for PayPal

@@ -146,7 +146,8 @@ function SubscribePage({ onAdd, onSubscribe }) {
       return {
         ...f, qty,
         id: `${f.id}--sub`,
-        price: f.price * (1 - cad.save / 100),
+        // Rounded to the cent, matching the server's pricing in api/_lib/catalog.js.
+        price: Math.round(f.price * (100 - cad.save)) / 100,
         sub: `SUB · ${cad.label.toUpperCase()} · −${cad.save}%`,
         subscription: cad.id,
       };

@@ -127,12 +127,13 @@ function useCart() {
     setCartOpen(true);
   };
   const remove = id => setCart(c => c.filter(i => i.id !== id));
+  const clear = () => setCart([]);
   const inc = id => setCart(c => c.map(i => i.id === id ? { ...i, qty: i.qty + 1 } : i));
   const dec = id => setCart(c => c.map(i => i.id === id ? { ...i, qty: Math.max(0, i.qty - 1) } : i).filter(i => i.qty > 0));
   const count = cart.reduce((s, i) => s + i.qty, 0);
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
-  return { cart, count, total, add, replaceSubscription, inc, dec, remove, cartOpen, setCartOpen };
+  return { cart, count, total, add, replaceSubscription, inc, dec, remove, clear, cartOpen, setCartOpen };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -459,13 +460,114 @@ function ShellCartRow({ item: i, animateIn, onInc, onDec }) {
   );
 }
 
-function CartDrawer({ open, items, onClose, onInc, onDec, total }) {
+// ─────────────────────────────────────────────────────────────
+// PAYPAL (sandbox) CHECKOUT
+// The browser only ever sends flavor ids + quantities. /api/paypal/orders prices the
+// cart on the server and creates the PayPal order; /api/paypal/capture captures it.
+// ─────────────────────────────────────────────────────────────
+let shellPayPalPromise = null;
+
+function shellLoadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = true;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('PayPal script failed to load'));
+    document.head.appendChild(s);
+  });
+}
+
+// Loads config + the PayPal v6 web SDK once per page; resolves to { sdk, env }.
+function shellLoadPayPal() {
+  if (shellPayPalPromise) return shellPayPalPromise;
+  shellPayPalPromise = (async () => {
+    const res = await fetch('/api/paypal/config');
+    if (!res.ok) throw Object.assign(new Error('Checkout is not configured'), { unavailable: true });
+    const { clientId, env } = await res.json();
+    const host = env === 'live' ? 'https://www.paypal.com' : 'https://www.sandbox.paypal.com';
+    if (!window.paypal || !window.paypal.createInstance) await shellLoadScript(`${host}/web-sdk/v6/core`);
+    const sdk = await window.paypal.createInstance({ clientId, components: ['paypal-payments'], pageType: 'cart' });
+    const methods = await sdk.findEligibleMethods({ currencyCode: 'USD' });
+    if (!methods.isEligible('paypal')) throw Object.assign(new Error('PayPal is not available here'), { unavailable: true });
+    return { sdk, env };
+  })();
+  // Let a later open retry after a failure.
+  shellPayPalPromise.catch(() => { shellPayPalPromise = null; });
+  return shellPayPalPromise;
+}
+
+async function shellPostJson(url, body) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+// status: idle | loading | ready | paying | capturing | paid | cancelled | error | failed (SDK load) | unavailable
+function useShellPayPal({ active, items, onPaid }) {
+  const [state, setState] = useState({ status: 'idle', env: null, message: '', receipt: null });
+  const sessionRef = useRef(null);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const onPaidRef = useRef(onPaid);
+  onPaidRef.current = onPaid;
+
+  useEffect(() => {
+    if (!active || sessionRef.current) return;
+    let alive = true;
+    setState(s => ({ ...s, status: 'loading', message: '' }));
+    shellLoadPayPal().then(({ sdk, env }) => {
+      if (!alive) return;
+      sessionRef.current = sdk.createPayPalOneTimePaymentSession({
+        onApprove: async data => {
+          setState(s => ({ ...s, status: 'capturing', message: '' }));
+          try {
+            const r = await shellPostJson('/api/paypal/capture', { orderId: data.orderId });
+            if (r.status !== 'COMPLETED') throw new Error(`Payment ${String(r.status || 'not completed').toLowerCase()}`);
+            setState(s => ({ ...s, status: 'paid', receipt: r, message: '' }));
+            if (onPaidRef.current) onPaidRef.current(r);
+          } catch (e) {
+            setState(s => ({ ...s, status: 'error', message: e.message || 'Payment could not be captured' }));
+          }
+        },
+        onCancel: () => setState(s => ({ ...s, status: 'cancelled', message: 'Payment cancelled. Your fridge is still stocked.' })),
+        onError: () => setState(s => ({ ...s, status: 'error', message: 'PayPal hit an error. Try again.' })),
+      });
+      setState(s => ({ ...s, status: 'ready', env }));
+    }).catch(e => {
+      if (!alive) return;
+      setState(s => ({ ...s, status: e.unavailable ? 'unavailable' : 'failed',
+        message: e.unavailable ? 'Checkout is offline on this host' : 'PayPal failed to load. Reopen the cart to retry.' }));
+    });
+    return () => { alive = false; };
+  }, [active]);
+
+  // Called straight from the click handler so the PayPal popup isn't blocked.
+  const start = () => {
+    const session = sessionRef.current;
+    if (!session) return;
+    setState(s => ({ ...s, status: 'paying', message: '', receipt: null }));
+    const lines = itemsRef.current.map(i => ({ id: i.id, qty: i.qty, subscription: i.subscription || undefined }));
+    const orderPromise = shellPostJson('/api/paypal/orders', { items: lines })
+      .then(d => ({ orderId: d.orderId }))
+      .catch(e => {
+        setState(s => ({ ...s, status: 'error', message: e.message || 'Could not start checkout' }));
+        throw e;
+      });
+    Promise.resolve(session.start({ presentationMode: 'auto' }, orderPromise)).catch(() => {});
+  };
+
+  return { ...state, start };
+}
+
+function CartDrawer({ open, items, onClose, onInc, onDec, total, onPaid }) {
   const panelRef = useRef(null);
   const closeRef = useRef(null);
   const returnFocusRef = useRef(null);
   const mountedRef = useRef(false);
-  const [checkoutNote, setCheckoutNote] = useState(false);
   const reduced = shellUseMedia(SHELL_REDUCED_MOTION);
+  const pay = useShellPayPal({ active: open && items.length > 0, items, onPaid });
   // Latest onClose without re-binding the key listener on every App render.
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -490,7 +592,6 @@ function CartDrawer({ open, items, onClose, onInc, onDec, total }) {
       const raf = requestAnimationFrame(() => requestAnimationFrame(focusClose));
       return () => cancelAnimationFrame(raf);
     }
-    setCheckoutNote(false);
     const el = returnFocusRef.current;
     returnFocusRef.current = null;
     if (el && el !== document.body && document.contains(el) && typeof el.focus === 'function') {
@@ -649,18 +750,26 @@ function CartDrawer({ open, items, onClose, onInc, onDec, total }) {
             </div>
           )}
           <button className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center' }}
-                  disabled={items.length === 0}
-                  onClick={() => setCheckoutNote(true)}>
-            Checkout · ${total.toFixed(2)}
+                  disabled={items.length === 0 || !['ready', 'cancelled', 'error', 'paid'].includes(pay.status)}
+                  aria-busy={['loading', 'paying', 'capturing'].includes(pay.status)}
+                  onClick={pay.start}>
+            {pay.status === 'loading' ? 'Loading PayPal…'
+              : pay.status === 'paying' ? 'Waiting for PayPal…'
+              : pay.status === 'capturing' ? 'Confirming payment…'
+              : pay.status === 'unavailable' || pay.status === 'failed' ? 'Checkout offline'
+              : <>Pay with PayPal · ${total.toFixed(2)}</>}
           </button>
           <div role="status" aria-live="polite" style={{
-            font: '500 12px var(--font-mono)', color: 'var(--fg-2)', textAlign: 'center', letterSpacing: '0.04em',
-            marginTop: checkoutNote ? 10 : 0
+            font: '500 12px var(--font-mono)', color: pay.status === 'paid' ? 'var(--accent)' : 'var(--fg-2)',
+            textAlign: 'center', letterSpacing: '0.04em',
+            marginTop: pay.message || pay.status === 'paid' ? 10 : 0
           }}>
-            {checkoutNote ? 'Demo store — checkout is disabled' : ''}
+            {pay.status === 'paid' && pay.receipt
+              ? `PAID $${pay.receipt.amount} · ORDER ${pay.receipt.orderId}`
+              : pay.message}
           </div>
           <div style={{ font: '400 11px var(--font-mono)', color: 'var(--fg-4)', textAlign: 'center', marginTop: 12, letterSpacing: '0.06em' }}>
-            SECURE · 30-DAY GUARANTEE · CANCEL ANYTIME
+            {pay.env === 'sandbox' ? 'PAYPAL SANDBOX · TEST MONEY ONLY' : 'SECURE · 30-DAY GUARANTEE · CANCEL ANYTIME'}
           </div>
         </div>
       </div>
