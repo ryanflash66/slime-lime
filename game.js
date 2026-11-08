@@ -35,6 +35,9 @@
     { id: 'loot',   code: 'LT', name: 'Looter',         desc: 'Picked up 3 bottles' },
     { id: 'end',    code: 'CP', name: 'Completionist',  desc: 'Reached the edge of the map' },
     { id: 'konami', code: '↑↑', name: 'Cheat Code',     desc: '↑ ↑ ↓ ↓ ← → ← → B A' },
+    { id: 'stocked', code: 'ST', name: 'Fully Stocked', desc: 'Filled a subscription fridge' },
+    { id: 'rainbow', code: 'RB', name: 'Rainbow Shelf', desc: 'Lined a shelf with every flavor' },
+    { id: 'srank',   code: 'S+', name: 'S Rank',        desc: 'Patterned every shelf in a full fridge' },
   ];
   var KEY = 'sl-achievements-v1';
   var unlocked = {};
@@ -53,7 +56,7 @@
     '<div class="sl-hud-bar" aria-hidden="true"><i></i></div>' +
     '<button type="button" class="sl-hud-trophy" aria-expanded="false" aria-controls="sl-ach-panel">' +
       '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7 3h10v2h3v3a5 5 0 0 1-4.6 5A5 5 0 0 1 13 15.9V18h3v3H8v-3h3v-2.1A5 5 0 0 1 8.6 13 5 5 0 0 1 4 8V5h3V3Zm0 4H6v1a3 3 0 0 0 1.4 2.5A7 7 0 0 1 7 8V7Zm10 0v1c0 .9-.1 1.7-.4 2.5A3 3 0 0 0 18 8V7h-1Z"/></svg>' +
-      '<span class="sl-hud-count">0/7</span><span class="sr-only"> achievements unlocked</span>' +
+      '<span class="sl-hud-count">0/10</span><span class="sr-only"> achievements unlocked</span>' +
     '</button>' +
     '<div class="sl-ach-panel" id="sl-ach-panel" hidden></div>';
   var toasts = el('div', 'sl-toasts'); toasts.setAttribute('role', 'status'); toasts.setAttribute('aria-live', 'polite');

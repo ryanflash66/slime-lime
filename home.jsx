@@ -44,6 +44,48 @@ const hero3DOpts = f => ({
   bg: `assets/scenes/bg-${f.id}-${window.innerWidth < 900 ? 'tall' : 'wide'}.webp`,
 });
 
+// +1 = the new slide comes in from the right (moving forward through the lineup), -1 = from the left.
+function heroSlideDir(fromId, toId) {
+  const list = window.FLAVORS || [];
+  const a = list.findIndex(f => f.id === fromId), b = list.findIndex(f => f.id === toId), n = list.length;
+  if (a < 0 || b < 0 || a === b) return 0;
+  return (b - a + n) % n <= n / 2 ? 1 : -1;
+}
+
+// Swipe (touch) or a sideways trackpad scroll over the hero steps through the flavors.
+function heroUseSwipe(ref, step, layoutKey) {
+  const stepRef = useRefH(step);
+  stepRef.current = step;
+  useEffectH(() => {
+    const el = ref.current;
+    if (!el) return;
+    let start = null, acc = 0, cool = 0;
+    const down = e => { if (e.pointerType === 'touch') start = { x: e.clientX, y: e.clientY }; };
+    const up = e => {
+      if (!start) return;
+      const dx = e.clientX - start.x, dy = e.clientY - start.y;
+      start = null;
+      if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.4) stepRef.current(dx < 0 ? 1 : -1);
+    };
+    const cancel = () => { start = null; };
+    const wheel = e => {
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY) * 1.2) return;   // vertical scrolling is untouched
+      const now = performance.now();
+      if (now < cool) return;
+      acc += e.deltaX;
+      if (Math.abs(acc) > 60) { stepRef.current(acc > 0 ? 1 : -1); acc = 0; cool = now + 650; }
+    };
+    el.addEventListener('pointerdown', down, { passive: true });
+    el.addEventListener('pointerup', up, { passive: true });
+    el.addEventListener('pointercancel', cancel, { passive: true });
+    el.addEventListener('wheel', wheel, { passive: true });
+    return () => {
+      el.removeEventListener('pointerdown', down); el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', cancel); el.removeEventListener('wheel', wheel);
+    };
+  }, [layoutKey]);   // the hero renders a different <section> per layout
+}
+
 // The WebGL stage. Falls back to the SVG bottle until bottle3d.js loads, or if WebGL is unavailable.
 function HeroStage({ flavor, frame, fallbackH }) {
   const hostRef = useRefH(null);
@@ -80,7 +122,13 @@ function HeroStage({ flavor, frame, fallbackH }) {
     };
   }, []);
 
-  useEffectH(() => { if (instRef.current) instRef.current.setFlavor(hero3DOpts(flavor)); }, [flavor.id]);
+  // Slide direction = the shorter way round the lineup (so prev/next arrows, dots and swipes all read right).
+  const prevIdxRef = useRefH(null);
+  useEffectH(() => {
+    const dir = heroSlideDir(prevIdxRef.current, flavor.id);
+    prevIdxRef.current = flavor.id;
+    if (instRef.current) instRef.current.setFlavor(hero3DOpts(flavor), { dir });
+  }, [flavor.id]);
   useEffectH(() => { if (instRef.current) instRef.current.setFrame(frame); }, [frame.x, frame.y, frame.fill]);
 
   const showFallback = !ready;
@@ -116,12 +164,23 @@ function HeroSwitcher({ flavors, current, onPick, align = 'center' }) {
   const i = Math.max(0, flavors.findIndex(f => f.id === current.id));
   const go = d => onPick(flavors[(i + d + flavors.length) % flavors.length]);
   const pad = n => String(n).padStart(2, '0');
+  const nameRef = useRefH(null);
+  const lastRef = useRefH(current.id);
+  // the flavor name slides in from the same side as the stage
+  useEffectH(() => {
+    const dir = heroSlideDir(lastRef.current, current.id);
+    lastRef.current = current.id;
+    const el = nameRef.current;
+    if (!dir || !el || !el.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    el.animate([{ transform: `translateX(${dir * 18}px)`, opacity: 0, filter: 'blur(3px)' }, { transform: 'none', opacity: 1, filter: 'none' }],
+      { duration: 520, delay: 160, easing: heroEase, fill: 'backwards' });
+  }, [current.id]);
   return (
     <div role="group" aria-label="Choose a flavor" style={{
       display: 'flex', flexDirection: 'column', alignItems: align, gap: 12,
     }}>
       <div className="mono-sm" aria-live="polite" style={{ color: 'var(--fg-2)', letterSpacing: '0.14em', whiteSpace: 'nowrap' }}>
-        <span style={{ color: 'var(--accent)' }}>{pad(i + 1)}</span> / {pad(flavors.length)} — {current.name.toUpperCase()}
+        <span style={{ color: 'var(--accent)' }}>{pad(i + 1)}</span> / {pad(flavors.length)} — <span ref={nameRef} style={{ display: 'inline-block' }}>{current.name.toUpperCase()}</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <button type="button" className="hero-arrow" aria-label="Previous flavor" onClick={() => go(-1)}><Icon name="arrowL" size={16}/></button>
@@ -173,6 +232,11 @@ function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
   const small = heroUseMedia('(max-width: 600px)');
   const list = flavors || window.FLAVORS;
   const pick = onPickFlavor || (() => {});
+  const secRef = useRefH(null);
+  heroUseSwipe(secRef, d => {
+    const i = Math.max(0, list.findIndex(f => f.id === flavor.id));
+    pick(list[(i + d + list.length) % list.length]);
+  }, narrow);
 
   // First-load entrance, once per session; fill 'backwards' so nothing lingers or blocks clicks.
   React.useLayoutEffect(() => {
@@ -223,7 +287,7 @@ function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
 
   if (narrow) {
     return (
-      <section data-no-reveal data-level="Spawn" data-screen-label="01 Home Hero" style={{ position: 'relative', background: 'var(--ink-800)', overflow: 'hidden' }}>
+      <section ref={secRef} data-no-reveal data-level="Spawn" data-screen-label="01 Home Hero" style={{ position: 'relative', background: 'var(--ink-800)', overflow: 'hidden' }}>
         <div style={{
           position: 'relative', height: small ? 'clamp(440px, 64svh, 560px)' : 'clamp(520px, 66svh, 680px)',
           WebkitMaskImage: 'linear-gradient(180deg, #000 78%, transparent)', maskImage: 'linear-gradient(180deg, #000 78%, transparent)',
@@ -243,7 +307,7 @@ function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
   }
 
   return (
-    <section data-no-reveal data-level="Spawn" data-screen-label="01 Home Hero" style={{
+    <section ref={secRef} data-no-reveal data-level="Spawn" data-screen-label="01 Home Hero" style={{
       position: 'relative', overflow: 'hidden', background: 'var(--ink-800)',
       height: 'max(680px, calc(100svh - 104px))',
     }}>

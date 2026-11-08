@@ -45,8 +45,10 @@
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/Physics2DPlugin.min.js" integrity="sha384-pJ0BQo7Hj3l3RJkVnnsS/Zx1yIyxLtrDhu/TBj0JZK92Odxbh+St8qOFvj2EMdit" crossorigin="anonymous"></script>
 <script src="motion.js"></script>
 <script src="game.js"></script>
+<script src="presence.js"></script>
 <script type="module" src="bottle3d.js"></script>
 <script type="text/babel" src="shell.jsx"></script>
+<script type="text/babel" src="fridge.jsx"></script>
 <script type="text/babel" src="home.jsx"></script>
 <script type="text/babel" src="flagship.jsx"></script>
 <script type="text/babel" src="subscribe.jsx"></script>
@@ -77,10 +79,11 @@ function App() {
       <window.Nav cartCount={cart.count} onCart={() => cart.setCartOpen(true)} route={url}/>
       <div ref={pageRef}>{page}</div>
       <window.Footer/>
-      <window.CartDrawer
+      <window.FridgeDrawer
         open={cart.cartOpen}
         items={cart.cart}
         onClose={() => cart.setCartOpen(false)}
+        onSetQty={cart.setQty}
         onInc={cart.inc}
         onDec={cart.dec}
         total={cart.total}
