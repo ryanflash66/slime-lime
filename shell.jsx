@@ -198,27 +198,65 @@ const SHELL_FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]),
 function useRoute() {
   const [route, setRoute] = useState(() => window.location.hash.slice(1) || '/');
   useEffect(() => {
-    const onHash = () => {
-      const next = window.location.hash.slice(1) || '/';
-      setRoute(next);
-      // In-page anchors ("/story#science") are scrolled to after render, below.
-      if (!next.includes('#')) window.scrollTo(0, 0);
-    };
+    // Scrolling (top of page / in-page anchors) is owned by useRouteStage, which runs it
+    // once the new page is actually on screen.
+    const onHash = () => setRoute(window.location.hash.slice(1) || '/');
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
-  useEffect(() => {
-    document.title = shellTitleFor(route);
-    const anchor = route.split('#')[1];
-    if (!anchor) return;
-    const el = document.getElementById(anchor);
-    if (!el) { window.scrollTo(0, 0); return; }
-    // Offset by the sticky header so the target isn't tucked underneath it.
-    const header = document.querySelector('header');
-    const offset = header ? header.offsetHeight : 0;
-    window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - offset });
-  }, [route]);
+  useEffect(() => { document.title = shellTitleFor(route); }, [route]);
   return route;
+}
+
+const shellRouteBase = r => (r || '/').split('#')[0] || '/';
+
+// Scroll for a freshly shown route: its #anchor (offset by the sticky header), else the top.
+function shellScrollForRoute(route, smooth) {
+  const anchor = route.split('#')[1];
+  const el = anchor && document.getElementById(anchor);
+  const M = window.SLMotion;
+  if (!el) { if (M) M.scrollTo(0, { instant: true }); else window.scrollTo({ top: 0, behavior: 'instant' }); return; }
+  if (M) { M.scrollTo(el, { instant: !smooth }); return; }
+  const header = document.querySelector('header');
+  const offset = header ? header.offsetHeight : 0;
+  window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - offset, behavior: smooth ? 'smooth' : 'instant' });
+}
+
+// Page transitions. Returns the route to *render*: on a page change it lags the URL until the
+// GSAP curtain covers the old page, then swaps, scrolls, uncovers and starts the new page's
+// scroll reveals (scoped to pageRef). Anchor-only changes on the same page just scroll.
+function useRouteStage(route, pageRef) {
+  const [shown, setShown] = useState(route);
+  const first = useRef(true);
+  useEffect(() => {
+    if (route === shown) return;
+    if (shellRouteBase(route) === shellRouteBase(shown)) { setShown(route); return; }
+    const M = window.SLMotion;
+    if (!M) { setShown(route); return; }
+    let live = true;
+    M.cover().then(() => { if (live) setShown(route); });
+    return () => { live = false; };
+  }, [route]);
+  React.useLayoutEffect(() => {
+    const samePage = !first.current && pageRef.current && pageRef.current.dataset.base === shellRouteBase(shown);
+    if (first.current) {
+      // initial load: only jump for a deep link ("#/story#science")
+      if (shown.includes('#')) shellScrollForRoute(shown, false);
+    } else {
+      shellScrollForRoute(shown, samePage);
+    }
+    first.current = false;
+    if (pageRef.current) pageRef.current.dataset.base = shellRouteBase(shown);
+    if (window.SLMotion) window.SLMotion.uncover();
+  }, [shown]);
+  // Reveals are per page, not per anchor.
+  const base = shellRouteBase(shown);
+  useEffect(() => {
+    const M = window.SLMotion;
+    if (!M || !pageRef.current) return;
+    return M.pageIn(pageRef.current);
+  }, [base]);
+  return shown;
 }
 
 function navTo(path) {
@@ -240,6 +278,17 @@ function shellIsActive(path, route) {
   return (path === '/' && (route === '/' || route === '')) || (path !== '/' && route.startsWith(path));
 }
 
+// Move the nav indicator under `link` (or the aria-current link when null).
+function shellNavIndTo(navRef, indRef, link, instant) {
+  const M = window.SLMotion, nav = navRef.current, ind = indRef.current;
+  if (!M || !nav || !ind) return;
+  const el = link || nav.querySelector('a[aria-current="page"]');
+  if (!el) { M.gsap.to(ind, { autoAlpha: 0, duration: 0.2, overwrite: true }); return; }
+  const vars = { x: el.offsetLeft, scaleX: el.offsetWidth / 100, autoAlpha: 1, overwrite: true };
+  if (instant || M.reduced()) M.gsap.set(ind, vars);
+  else M.gsap.to(ind, { ...vars, duration: 0.45, ease: 'expo.out' });
+}
+
 function Nav({ cartCount, onCart, route }) {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -248,6 +297,20 @@ function Nav({ cartCount, onCart, route }) {
   const headerRef = useRef(null);
   const burgerRef = useRef(null);
   const panelRef = useRef(null);
+  const navRef = useRef(null);
+  const indRef = useRef(null);
+  const indPlaced = useRef(false);
+
+  // Sliding active indicator: parks under the current page, follows the hovered link.
+  useEffect(() => {
+    if (narrow) { indPlaced.current = false; return; }
+    shellNavIndTo(navRef, indRef, null, !indPlaced.current);
+    indPlaced.current = true;
+    const onResize = () => shellNavIndTo(navRef, indRef, null, true);
+    window.addEventListener('resize', onResize);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [route, narrow]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -336,12 +399,14 @@ function Nav({ cartCount, onCart, route }) {
           <Wordmark size={narrow ? 18 : 22}/>
         </a>
         {!narrow && (
-          <nav aria-label="Primary" style={{ display: 'flex', gap: 28 }}>
+          <nav ref={navRef} aria-label="Primary" onMouseLeave={() => shellNavIndTo(navRef, indRef, null)}
+               style={{ display: 'flex', gap: 28, position: 'relative' }}>
             {SHELL_NAV_LINKS.map(l => {
               const active = shellIsActive(l.path, route);
               return (
                 <a key={l.path} href={`#${l.path}`}
                    onClick={go(l.path)}
+                   onMouseEnter={e => shellNavIndTo(navRef, indRef, e.currentTarget)}
                    aria-current={active ? 'page' : undefined}
                    style={{
                      font: '500 14px/1 var(--font-ui)',
@@ -352,7 +417,7 @@ function Nav({ cartCount, onCart, route }) {
                      transition: `color 180ms ${SHELL_EASE_OUT}`
                    }}>
                   {l.label}
-                  {active && (
+                  {active && !window.SLMotion && (
                     <span aria-hidden="true" style={{
                       position: 'absolute', bottom: -2, left: 0, right: 0,
                       height: 2, background: 'var(--accent)',
@@ -362,6 +427,7 @@ function Nav({ cartCount, onCart, route }) {
                 </a>
               );
             })}
+            {window.SLMotion && <span ref={indRef} className="nav-ind" aria-hidden="true"/>}
           </nav>
         )}
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -845,5 +911,5 @@ function PageBottomCTA({ onAdd, label = "Add to fridge", price = "$2.50/bottle" 
 // ─────────────────────────────────────────────────────────────
 Object.assign(window, {
   Icon, Wordmark, Nav, CartDrawer, Footer, Can, PageBottomCTA,
-  useFlavorTheme, useCart, useRoute, navTo, FLAVORS,
+  useFlavorTheme, useCart, useRoute, useRouteStage, navTo, FLAVORS,
 });

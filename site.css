@@ -457,3 +457,31 @@ html { scroll-behavior: smooth; }
 @media (hover: hover) and (pointer: fine) {
   .hero-arrow:hover { border-color: var(--accent); }
 }
+
+/* ───────── GSAP motion layer (motion.js) ───────── */
+/* Motion rides on individual `translate` / CSS vars so it never fights React's inline transforms. */
+.btn { --mx: 0px; --my: 0px; translate: var(--mx) var(--my); }
+.sl-rv { --rv: 0px; translate: 0 var(--rv); }
+.sl-tilt {
+  --tx: 0deg; --ty: 0deg; --gx: 50%; --gy: 50%; --ga: 0;
+  transform: perspective(900px) rotateX(var(--tx)) rotateY(var(--ty));
+}
+.sl-tilt::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+  background: radial-gradient(circle at var(--gx) var(--gy), rgba(255,255,255,0.22), transparent 55%);
+  opacity: var(--ga); mix-blend-mode: soft-light;
+}
+.sl-curtain { position: fixed; inset: 0; z-index: 300; pointer-events: auto; overflow: hidden; }
+.sl-curtain-panel { position: absolute; inset: 0; will-change: transform; }
+.sl-curtain-accent { background: var(--accent); }
+.sl-curtain-ink {
+  background: radial-gradient(ellipse at 50% 55%, var(--ink-800), var(--ink-900) 70%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+}
+.sl-curtain-mark { width: 72px; height: 72px; filter: drop-shadow(0 0 18px var(--accent-glow)); }
+.sl-curtain-label { font: 500 11px var(--font-mono); letter-spacing: 0.22em; color: var(--fg-3); }
+.nav-ind {
+  position: absolute; left: 0; bottom: -2px; height: 2px; width: 100px;
+  background: var(--accent); box-shadow: 0 0 8px var(--accent-glow);
+  transform-origin: left center; pointer-events: none;
+}
