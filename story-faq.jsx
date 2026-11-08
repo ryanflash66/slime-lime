@@ -29,7 +29,7 @@ function storyFaqUseReducedMotion() {
 function StoryPage() {
   return (
     <>
-      <section style={{ position: 'relative', paddingTop: 120, paddingBottom: 80, overflow: 'hidden' }} data-screen-label="01 Story Hero">
+      <section style={{ position: 'relative', paddingTop: 120, paddingBottom: 80, overflow: 'hidden' }} data-level="Origin" data-screen-label="01 Story Hero">
         <div className="hero-bg" style={{ opacity: 0.4 }}/>
         <div className="container" style={{ position: 'relative' }}>
           <div className="eyebrow" style={{ marginBottom: 24 }}>// OUR STORY · FOUNDED 2024</div>
@@ -42,7 +42,7 @@ function StoryPage() {
         </div>
       </section>
 
-      <section className="section" style={{ background: 'var(--ink-900)', borderTop: '1px solid var(--border-1)' }}>
+      <section className="section" data-level="Timeline" style={{ background: 'var(--ink-900)', borderTop: '1px solid var(--border-1)' }}>
         <div className="container">
           <div className="eyebrow" style={{ marginBottom: 16 }}>// THE TIMELINE</div>
           <h2 className="display-lg" style={{ marginBottom: 56 }}>How we got here.</h2>
@@ -64,7 +64,7 @@ function StoryPage() {
         </div>
       </section>
 
-      <section className="section" id="science">
+      <section className="section" id="science" data-level="The science">
         <div className="container">
           <div className="eyebrow" style={{ marginBottom: 16 }}>// THE SCIENCE</div>
           <h2 className="display-lg" style={{ marginBottom: 40, maxWidth: 800 }}>What's actually in the bottle.</h2>
@@ -87,7 +87,7 @@ function StoryPage() {
         </div>
       </section>
 
-      <section className="section" style={{ background: 'var(--ink-900)', borderTop: '1px solid var(--border-1)', textAlign: 'center' }}>
+      <section className="section" data-level="The crew" style={{ background: 'var(--ink-900)', borderTop: '1px solid var(--border-1)', textAlign: 'center' }}>
         <div className="container-narrow">
           <div className="eyebrow" style={{ marginBottom: 16, display: 'inline-flex' }}>// THE PEOPLE</div>
           <h2 className="display-lg" style={{ marginBottom: 24 }}>Built by gamers.<br/><span style={{ color: 'var(--accent)' }}>Backed by chemists.</span></h2>
@@ -178,14 +178,14 @@ function FAQPage() {
   let idx = 0;
   return (
     <>
-      <section style={{ paddingTop: 100, paddingBottom: 40 }} data-screen-label="01 FAQ">
+      <section style={{ paddingTop: 100, paddingBottom: 40 }} data-level="Help desk" data-screen-label="01 FAQ">
         <div className="container-narrow">
           <div className="eyebrow" style={{ marginBottom: 16 }}>// SUPPORT · FAQ</div>
           <h1 className="display-lg" style={{ marginBottom: 16 }}>Questions, <span style={{ color: 'var(--accent)' }}>answered.</span></h1>
           <p className="body-lg">If we missed something, ping us in Discord — we read every message.</p>
         </div>
       </section>
-      <section style={{ paddingBottom: 120 }}>
+      <section data-level="Intel" style={{ paddingBottom: 120 }}>
         <div className="container-narrow">
           {groups.map(g => (
             <div key={g.name} style={{ marginBottom: 32 }}>

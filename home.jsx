@@ -85,7 +85,7 @@ function HeroStage({ flavor, frame, fallbackH }) {
 
   const showFallback = !ready;
   return (
-    <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'var(--ink-800)' }}>
+    <div aria-hidden="true" data-hero-stage style={{ position: 'absolute', inset: 0, background: 'var(--ink-800)' }}>
       <div ref={hostRef} style={{
         position: 'absolute', inset: 0,
         opacity: ready ? 1 : 0,
@@ -197,7 +197,7 @@ function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
   const ctaFlex = small ? { flex: '1 1 auto', justifyContent: 'center' } : null;
 
   const copy = (
-    <div ref={copyRef} style={{ position: 'relative', maxWidth: 600, minWidth: 0 }}>
+    <div ref={copyRef} data-hero-copy style={{ position: 'relative', maxWidth: 600, minWidth: 0 }}>
       <div className="eyebrow" style={{ marginBottom: 22 }}>Functional hydration · built for gamers</div>
       <h1 className="hero-title">
         Late nights deserve <span style={{ color: 'var(--accent)' }}>better fuel.</span>
@@ -223,7 +223,7 @@ function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
 
   if (narrow) {
     return (
-      <section data-no-reveal data-screen-label="01 Home Hero" style={{ position: 'relative', background: 'var(--ink-800)', overflow: 'hidden' }}>
+      <section data-no-reveal data-level="Spawn" data-screen-label="01 Home Hero" style={{ position: 'relative', background: 'var(--ink-800)', overflow: 'hidden' }}>
         <div style={{
           position: 'relative', height: small ? 'clamp(440px, 64svh, 560px)' : 'clamp(520px, 66svh, 680px)',
           WebkitMaskImage: 'linear-gradient(180deg, #000 78%, transparent)', maskImage: 'linear-gradient(180deg, #000 78%, transparent)',
@@ -243,7 +243,7 @@ function Hero({ flavor, flavors, onPickFlavor, onShop, onWatch }) {
   }
 
   return (
-    <section data-no-reveal data-screen-label="01 Home Hero" style={{
+    <section data-no-reveal data-level="Spawn" data-screen-label="01 Home Hero" style={{
       position: 'relative', overflow: 'hidden', background: 'var(--ink-800)',
       height: 'max(680px, calc(100svh - 104px))',
     }}>
@@ -340,6 +340,7 @@ function LiveTicker() {
 
   return (
     <section
+      className="sl-ticker"
       aria-label="Live order feed"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -381,17 +382,20 @@ function LiveTicker() {
 // ─────────────────────────────────────────────────────────────
 function ProofStrip() {
   const stats = [
-    { v: '75mg', l: 'CLEAN CAFFEINE', s: 'L-theanine paired. Slow-release. No crash.' },
-    { v: '5g', l: 'SUGAR · 35 CAL', s: 'Real fruit. Low glycemic. No phantom calories.' },
-    { v: '6', l: 'ELECTROLYTES', s: 'Sodium, potassium, magnesium. Real hydration.' },
-    { v: '0', l: 'BS INGREDIENTS', s: 'No taurine, no fake colors, no smoke and mirrors.' },
+    { v: '75mg', n: 75, u: 'mg', l: 'CLEAN CAFFEINE', s: 'L-theanine paired. Slow-release. No crash.' },
+    { v: '5g', n: 5, u: 'g', l: 'SUGAR · 35 CAL', s: 'Real fruit. Low glycemic. No phantom calories.' },
+    { v: '6', n: 6, u: '', l: 'ELECTROLYTES', s: 'Sodium, potassium, magnesium. Real hydration.' },
+    // counts *down* to zero, scoreboard style
+    { v: '0', n: 0, u: '', from: 99, l: 'BS INGREDIENTS', s: 'No taurine, no fake colors, no smoke and mirrors.' },
   ];
   return (
     <section className="section-sm" style={{ borderBottom: '1px solid var(--border-1)' }}>
-      <div className="container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 32 }}>
+      <div className="container sl-skew" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 32 }}>
         {stats.map(s => (
           <div key={s.l} style={{ borderLeft: '1px solid var(--border-2)', paddingLeft: 24 }}>
-            <div style={{ font: '700 clamp(44px, 10vw, 64px)/1 var(--font-mono)', color: 'var(--accent)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>{s.v}</div>
+            <div style={{ font: '700 clamp(44px, 10vw, 64px)/1 var(--font-mono)', color: 'var(--accent)', letterSpacing: '-0.01em', fontVariantNumeric: 'tabular-nums' }}>
+              <span data-count={s.n} data-suffix={s.u} data-from={s.from}>{s.v}</span>
+            </div>
             <div className="mono-sm" style={{ color: 'var(--fg-2)', marginTop: 14, fontSize: 11 }}>{s.l}</div>
             <div className="body" style={{ fontSize: 14, marginTop: 8, color: 'var(--fg-3)' }}>{s.s}</div>
           </div>
@@ -404,12 +408,172 @@ function ProofStrip() {
 // ─────────────────────────────────────────────────────────────
 // LINEUP — flavor switcher + grid
 // ─────────────────────────────────────────────────────────────
+// Flavor "character stats" for the select screen (taste profile, 0-100).
+const homeSecProfile = {
+  'lemon-lime': { TART: 64, SWEET: 38, CHILL: 56, HYPE: 90 },
+  cherry:       { TART: 88, SWEET: 46, CHILL: 40, HYPE: 74 },
+  'blue-rasp':  { TART: 58, SWEET: 52, CHILL: 96, HYPE: 82 },
+  mango:        { TART: 34, SWEET: 80, CHILL: 42, HYPE: 86 },
+  grape:        { TART: 30, SWEET: 72, CHILL: 48, HYPE: 99 },
+  watermelon:   { TART: 22, SWEET: 62, CHILL: 84, HYPE: 58 },
+};
+
+// Character select: the lineup pins, scrolling slides a coverflow of flavors past a P1 frame,
+// and whichever flavor lands in the frame is "selected": it re-themes the whole site and its
+// stats load into the panel. Snaps to each flavor. GSAP-only; the grid below is the fallback.
+function LineupSelect({ flavors, current, onPick, onAdd, canHover }) {
+  const secRef = useRefH(null);
+  const trackRef = useRefH(null);
+  const slotRefs = useRefH([]);
+  const nameRef = useRefH(null);
+  const barRefs = useRefH([]);
+  const stRef = useRefH(null);
+  const frameRef = useRefH(null);
+  const [idx, setIdx] = useStateH(0);
+  const seen = useRefH(new Set());
+  // Scrolling only *previews* a flavor's theme. The committed theme is lime by default, or
+  // whatever the player explicitly picked (card / pip click here, or the hero switcher);
+  // leaving the select screen restores it.
+  const committedRef = useRefH(current);
+  const previewIdRef = useRefH(null);
+  const [lockedId, setLockedId] = useStateH(null);
+  const onPickRef = useRefH(onPick);
+  onPickRef.current = onPick;
+  const currentRef = useRefH(current);
+  currentRef.current = current;
+  useEffectH(() => {
+    // a theme change that isn't our scroll preview is a real pick (e.g. the hero switcher)
+    if (current.id !== previewIdRef.current) committedRef.current = current;
+  }, [current.id]);
+  const restore = () => {
+    previewIdRef.current = null;
+    if (currentRef.current.id !== committedRef.current.id) onPickRef.current(committedRef.current);
+  };
+  const n = flavors.length;
+  const f = flavors[idx];
+
+  // Layout effect: the pin wrapper must be reverted before React removes the section on unmount.
+  React.useLayoutEffect(() => {
+    const { gsap } = window.SLMotion;
+    const ctx = gsap.context(() => {
+      const track = trackRef.current;
+      const dist = () => Math.max(0, track.scrollWidth - window.innerWidth);
+      let last = -1;
+      const move = gsap.to(track, {
+        x: () => -dist(), ease: 'none',
+        scrollTrigger: {
+          trigger: secRef.current, pin: true, start: 'top top', end: () => '+=' + dist() * 1.15,
+          scrub: 0.6, invalidateOnRefresh: true,
+          snap: { snapTo: 1 / (n - 1), inertia: false, duration: { min: 0.15, max: 0.45 }, delay: 0.06, ease: 'power2.inOut' },
+          onUpdate: self => {
+            const i = Math.round(self.progress * (n - 1));
+            if (i !== last) { last = i; setIdx(i); }
+          },
+          onLeave: restore,
+          onLeaveBack: restore,
+        },
+      });
+      stRef.current = move.scrollTrigger;
+      // The P1 frame hugs a card; card height varies with text wrap, so measure it.
+      const fit = () => {
+        const s = slotRefs.current[0], fr = frameRef.current;
+        if (!s || !fr) return;
+        fr.style.width = (s.offsetWidth + 30) + 'px';
+        fr.style.height = (s.offsetHeight + 24) + 'px';
+      };
+      fit();
+      window.SLMotion.ScrollTrigger.addEventListener('refresh', fit);
+      slotRefs.current.forEach(slot => {
+        gsap.timeline({ scrollTrigger: { containerAnimation: move, trigger: slot, start: 'left right', end: 'right left', scrub: true } })
+          .fromTo(slot, { rotationY: 42, scale: 0.74, autoAlpha: 0.3, z: -160 },
+            { rotationY: 0, scale: 1, autoAlpha: 1, z: 0, ease: 'power1.out', duration: 1 })
+          .to(slot, { rotationY: -42, scale: 0.74, autoAlpha: 0.3, z: -160, ease: 'power1.in', duration: 1 });
+      });
+      return () => window.SLMotion.ScrollTrigger.removeEventListener('refresh', fit);
+    }, secRef);
+    return () => { ctx.revert(); restore(); };
+  }, []);
+
+  // New selection: re-theme, decode the name, load the stat bars.
+  useEffectH(() => {
+    const st = stRef.current;
+    if (!st) return;
+    const y = st.scroll();
+    if (y < st.start - 2 || y > st.end + 2) return;   // only while the select screen is on
+    const { gsap } = window.SLMotion;
+    if (f.id !== current.id) { previewIdRef.current = f.id; onPick(f); }
+    if (nameRef.current) gsap.to(nameRef.current, { duration: 0.6, scrambleText: { text: f.name.toUpperCase(), chars: '01<>/|_#', speed: 0.7 }, overwrite: true });
+    Object.values(homeSecProfile[f.id]).forEach((v, k) => {
+      const bar = barRefs.current[k];
+      if (bar) gsap.fromTo(bar, { scaleX: 0 }, { scaleX: v / 100, duration: 0.7, ease: 'expo.out', delay: k * 0.06, overwrite: true });
+    });
+    seen.current.add(f.id);
+    if (seen.current.size === n && window.SLGame) window.SLGame.achieve('scout');
+  }, [idx]);
+
+  const jump = i => {
+    const st = stRef.current;
+    if (!st) return;
+    // explicit pick: this flavor's theme sticks after leaving the select screen
+    committedRef.current = flavors[i];
+    previewIdRef.current = null;
+    setLockedId(flavors[i].id);
+    if (current.id !== flavors[i].id) onPick(flavors[i]);
+    window.SLMotion.scrollTo(st.start + (st.end - st.start) * (i / (n - 1)), { duration: 0.8 });
+  };
+  const prof = homeSecProfile[f.id];
+  const pad2 = v => String(v).padStart(2, '0');
+
+  return (
+    <section ref={secRef} className="cs" id="shop" data-level="Character select" data-screen-label="02 Lineup" aria-label="Choose your flavor">
+      <div className="container cs-top">
+        <div style={{ minWidth: 0 }}>
+          <div className="eyebrow" style={{ marginBottom: 14 }}>// SELECT YOUR FLAVOR · 6 SKUs</div>
+          <h2 className="display-lg">Six flavors.<br/><span style={{ color: 'var(--accent)' }}>One mission.</span></h2>
+        </div>
+        <div className="cs-panel">
+          <div ref={nameRef} className="cs-name" aria-live="polite">{f.name.toUpperCase()}</div>
+          <div className="cs-stats">
+            {Object.keys(prof).map((k, i) => (
+              <React.Fragment key={k}>
+                <span>{k}</span>
+                <span className="cs-stat-bar" aria-hidden="true"><i ref={el => { barRefs.current[i] = el; }} style={{ transform: 'scaleX(' + (prof[k] / 100) + ')' }}/></span>
+                <span>{prof[k]}</span>
+              </React.Fragment>
+            ))}
+          </div>
+          <div className="cs-pips" role="group" aria-label="Jump to flavor">
+            {flavors.map((x, i) => (
+              <button key={x.id} type="button" aria-label={x.name} aria-current={i === idx ? 'true' : undefined} onClick={() => jump(i)}><span/></button>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="cs-stage">
+        <div ref={frameRef} className="cs-frame" aria-hidden="true"><i/><i/><i/><i/><b>{'P1 · ' + pad2(idx + 1) + '/' + pad2(n) + (lockedId === f.id ? ' · LOCKED IN' : '')}</b></div>
+        <div ref={trackRef} className="cs-track">
+          {flavors.map((x, i) => (
+            <div key={x.id} className="cs-slot" ref={el => { slotRefs.current[i] = el; }}>
+              <FlavorCard flavor={x}
+                onAdd={() => onAdd(x)} onSelect={() => jump(i)}
+                highlighted={i === idx}
+                canHover={canHover} reduced={false}/>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="cs-hint" aria-hidden="true">SCROLL TO CYCLE · CLICK A FLAVOR TO SELECT</div>
+    </section>
+  );
+}
+
 function Lineup({ flavors, current, onPick, onAdd }) {
   // Hover effects only for real pointers; transform-based hover is dropped under reduced motion.
   const canHover = homeSecUseMedia('(hover: hover) and (pointer: fine)');
   const reduced = homeSecUseMedia('(prefers-reduced-motion: reduce)');
+  if (window.SLMotion && !reduced) return <LineupSelect flavors={flavors} current={current} onPick={onPick} onAdd={onAdd} canHover={canHover}/>;
   return (
-    <section className="section" id="shop" data-screen-label="02 Lineup">
+    <section className="section" id="shop" data-level="Character select" data-screen-label="02 Lineup">
       <div className="container">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 56, flexWrap: 'wrap', gap: 24 }}>
           <div style={{ minWidth: 0 }}>
@@ -523,7 +687,12 @@ function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced })
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative' }}>
         <div style={{ font: '700 18px var(--font-mono)', color: flavor.color }}>${flavor.price.toFixed(2)}<span style={{ fontSize: 11, color: 'var(--fg-3)', fontWeight: 500 }}> /BOTTLE</span></div>
-        <button type="button" onClick={e => { e.stopPropagation(); onAdd(); }}
+        <button type="button" onClick={e => {
+            e.stopPropagation();
+            // loot pickup: the bottle arcs into the Fridge button, then the cart opens
+            if (window.SLGame) window.SLGame.loot(e.currentTarget, `assets/bottle/renders/card-${flavor.id}.webp`).then(onAdd);
+            else onAdd();
+          }}
           aria-label={`Add ${flavor.name} to fridge`}
           style={{
             background: hover ? flavor.color : 'var(--surface-pill)',
@@ -588,7 +757,8 @@ function ScrollStory() {
     const ctx = gsap.context(() => {
       const tl = gsap.timeline({
         defaults: { ease: 'none' },
-        scrollTrigger: { trigger: ref.current, start: 'top top', end: 'bottom bottom', scrub: 0.6 },
+        scrollTrigger: { trigger: ref.current, start: 'top top', end: 'bottom bottom', scrub: 0.6,
+          onLeave: () => { if (window.SLGame) window.SLGame.achieve('lore'); } },
       });
       tl.fromTo(barRef.current, { scaleX: 0 }, { scaleX: 1, duration: n }, 0);
       const peak = wide ? 1 : 0.32;
@@ -645,7 +815,7 @@ function ScrollStory() {
 
   if (reduced) {
     return (
-      <section className="section" style={{ position: 'relative', overflow: 'hidden', background: bg }} data-screen-label="03 Scroll Story">
+      <section className="section" style={{ position: 'relative', overflow: 'hidden', background: bg }} data-level="Lore" data-screen-label="03 Scroll Story">
         <div className="container" style={{ position: 'relative', zIndex: 2 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 80 }}>
             {acts.map((a, i) => (
@@ -666,7 +836,7 @@ function ScrollStory() {
   }
 
   return (
-    <section ref={ref} data-no-reveal style={{ position: 'relative', height: '300vh' }} data-screen-label="03 Scroll Story">
+    <section ref={ref} data-no-reveal style={{ position: 'relative', height: '300vh' }} data-level="Lore" data-screen-label="03 Scroll Story">
       <div style={{
         position: 'sticky', top: 0,
         height: '100vh',
@@ -758,7 +928,7 @@ function Streamers() {
     { name: 'Pacing.exe',          handle: '@pacing.exe', reach: '210K followers', game: 'League of Legends',quote: "I drink one before scrims and one mid-match. Six hours later I'm still locked in, no headache." },
   ];
   return (
-    <section className="section" style={{ background: 'var(--ink-900)', borderTop: '1px solid var(--border-1)', borderBottom: '1px solid var(--border-1)' }} data-screen-label="04 Streamers">
+    <section className="section" style={{ background: 'var(--ink-900)', borderTop: '1px solid var(--border-1)', borderBottom: '1px solid var(--border-1)' }} data-level="Squad" data-screen-label="04 Streamers">
       <div className="container">
         <div style={{ marginBottom: 56 }}>
           <div className="eyebrow" style={{ marginBottom: 16 }}>// CREATOR DESK · WHAT THEY'RE SAYING</div>
@@ -768,7 +938,7 @@ function Streamers() {
           </h2>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 20 }}>
+        <div className="sl-skew" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 20 }}>
           {quotes.map((q, i) => (
             <div key={i} className="card" style={{ padding: 32 }}>
               {/* live indicator */}
@@ -811,7 +981,7 @@ function Streamers() {
 // ─────────────────────────────────────────────────────────────
 function SubscribeBar({ onGo }) {
   return (
-    <section className="section" style={{ position: 'relative', overflow: 'hidden' }} data-screen-label="05 Subscribe Pitch">
+    <section className="section" style={{ position: 'relative', overflow: 'hidden' }} data-level="Loadout" data-screen-label="05 Subscribe Pitch">
       <div data-parallax="0.3" style={{
         position: 'absolute', inset: '-15% 0',
         backgroundImage: 'url(assets/scenes/lifestyle-desk.webp)',

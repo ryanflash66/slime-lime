@@ -180,7 +180,7 @@ function SubscribePage({ onAdd, onSubscribe }) {
 
   return (
     <>
-      <section style={{ position: 'relative', paddingTop: 80, paddingBottom: 40, overflow: 'hidden' }} data-screen-label="01 Subscribe Builder">
+      <section style={{ position: 'relative', paddingTop: 80, paddingBottom: 40, overflow: 'hidden' }} data-level="Loadout builder" data-screen-label="01 Subscribe Builder">
         <div className="hero-bg" style={{ opacity: 0.3 }}/>
         <div className="container-narrow" style={{ position: 'relative', textAlign: 'center' }}>
           <div className="eyebrow" style={{ marginBottom: 20, display: 'inline-flex' }}>// SUBSCRIBE · BUILD YOUR PACK</div>
@@ -194,7 +194,7 @@ function SubscribePage({ onAdd, onSubscribe }) {
         </div>
       </section>
 
-      <section style={{ paddingBottom: 80 }}>
+      <section data-level="Equip" style={{ paddingBottom: 80 }}>
         <div className="container" style={{
           display: 'grid',
           gridTemplateColumns: isWide ? 'minmax(0, 1.6fr) minmax(0, 1fr)' : 'minmax(0, 1fr)',
