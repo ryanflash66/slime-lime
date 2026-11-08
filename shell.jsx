@@ -289,6 +289,97 @@ function shellNavIndTo(navRef, indRef, link, instant) {
   else M.gsap.to(ind, { ...vars, duration: 0.45, ease: 'expo.out' });
 }
 
+// ─────────────────────────────────────────────────────────────
+// PLAYERS ONLINE pill (presence.js) — count in the HUD strip, popover with the ghost-cursor toggle
+// ─────────────────────────────────────────────────────────────
+const shellFmt = n => n.toLocaleString('en-US');
+
+function ShellPresence({ short }) {
+  const P = window.SLPresence;
+  const [st, setSt] = useState(() => (P ? { ...P.get() } : null));
+  const [ghosts, setGhosts] = useState(() => (P ? P.ghosts() : false));
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null);
+  const popRef = useRef(null);
+  const numRef = useRef(null);
+
+  useEffect(() => {
+    if (!P) return;
+    const offA = P.subscribe(s => setSt({ ...s }));
+    const offB = P.onGhosts(setGhosts);
+    return () => { offA(); offB(); };
+  }, []);
+  // a quick green blip whenever the number moves
+  useEffect(() => {
+    const el = numRef.current;
+    if (el && el.animate && !shellMatches(SHELL_REDUCED_MOTION)) el.animate([{ color: '#3BEA7C' }, { color: 'var(--fg-1)' }], { duration: 700, easing: 'ease-out' });
+  }, [st && st.online]);
+
+  const place = () => {
+    const r = btnRef.current && btnRef.current.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 8, left: Math.max(12, Math.min(window.innerWidth - 280, r.left)) });
+  };
+  useEffect(() => {
+    if (!open) return;
+    place();
+    const onKey = e => { if (e.key === 'Escape') { setOpen(false); if (btnRef.current) btnRef.current.focus(); } };
+    const onDown = e => {
+      if (popRef.current && popRef.current.contains(e.target)) return;
+      if (btnRef.current && btnRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onMove = () => place();
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown);
+    window.addEventListener('resize', onMove);
+    window.addEventListener('scroll', onMove, { passive: true });
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('resize', onMove);
+      window.removeEventListener('scroll', onMove);
+    };
+  }, [open]);
+  useEffect(() => { if (open && popRef.current) shellAnimateIn(popRef.current, { y: -4, duration: 180 }); }, [open]);
+
+  if (!P || !st) return null;
+  const h = st.history, lo = Math.min(...h), hi = Math.max(...h), span = Math.max(1, hi - lo);
+  const pts = h.map((v, i) => `${(i / (h.length - 1)) * 240},${30 - ((v - lo) / span) * 26}`).join(' ');
+  const reducedMotion = P.reducedMotion && P.reducedMotion();
+
+  return (
+    <>
+      <button ref={btnRef} type="button" className="sl-online" aria-expanded={open} aria-controls="sl-online-pop"
+        aria-label={`${shellFmt(st.online)} players online. Show details`} onClick={() => setOpen(o => !o)}>
+        <span className="sl-live-dot" aria-hidden="true"/>
+        <span aria-hidden="true"><b ref={numRef}>{shellFmt(st.online)}</b> {short ? 'ONLINE' : 'PLAYERS ONLINE'}</span>
+      </button>
+      {open && pos && ReactDOM.createPortal(
+        <div ref={popRef} id="sl-online-pop" className="sl-online-pop" role="dialog" aria-label="Players online"
+          style={{ top: pos.top, left: pos.left }}>
+          <div>PLAYERS ONLINE</div>
+          <div className="sl-online-big" aria-live="polite">{shellFmt(st.online)} <small>● LIVE</small></div>
+          <svg className="sl-online-spark" viewBox="0 0 240 34" preserveAspectRatio="none" aria-hidden="true">
+            <polyline points={`0,34 ${pts} 240,34`} fill="rgba(59,234,124,0.10)" stroke="none"/>
+            <polyline points={pts} fill="none" stroke="#3BEA7C" strokeWidth="1.5" vectorEffect="non-scaling-stroke"/>
+          </svg>
+          <div className="sl-online-row"><span>ON THIS PAGE</span><b>{shellFmt(st.here)}</b></div>
+          <button type="button" className="sl-online-toggle" role="switch" aria-checked={ghosts && !reducedMotion}
+            disabled={reducedMotion} onClick={() => P.ghosts(!ghosts)}>
+            <span>
+              Ghost cursors
+              <small>{reducedMotion ? 'Off while your device asks for reduced motion.' : 'See where other players are poking around.'}</small>
+            </span>
+            <span className={'sl-switch' + (ghosts && !reducedMotion ? ' is-on' : '')} aria-hidden="true"/>
+          </button>
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 function Nav({ cartCount, onCart, route }) {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -376,12 +467,15 @@ function Nav({ cartCount, onCart, route }) {
         padding: '8px 0',
         overflow: 'hidden'
       }}>
-        <div className="container" style={{ display: 'flex', justifyContent: narrow ? 'center' : 'space-between', alignItems: 'center', gap: 24 }}>
+        <div className="container" style={{ display: 'flex', justifyContent: narrow ? 'center' : 'space-between', alignItems: 'center', gap: narrow ? 16 : 24 }}>
+          {narrow && <ShellPresence short/>}
           <span className="mono-sm" style={{ color: 'var(--fg-3)', whiteSpace: 'nowrap' }}>
-            <span aria-hidden="true" style={{ color: 'var(--accent)' }}>●</span>&nbsp;&nbsp;FREE SHIPPING ON ORDERS $40+
+            <span aria-hidden="true" style={{ color: 'var(--accent)' }}>●</span>&nbsp;&nbsp;{compact ? 'FREE SHIP $40+' : 'FREE SHIPPING ON ORDERS $40+'}
           </span>
           {!narrow && (
-            <span className="mono-sm" style={{ color: 'var(--fg-3)', display: 'flex', gap: 16 }}>
+            <span className="mono-sm" style={{ color: 'var(--fg-3)', display: 'flex', gap: 16, alignItems: 'center' }}>
+              <ShellPresence/>
+              <span aria-hidden="true" style={{ opacity: 0.4 }}>|</span>
               <span>SUBSCRIBE → SAVE 28%</span>
               <span aria-hidden="true" style={{ opacity: 0.4 }}>|</span>
               <span>NEW: MANGO + GRAPE</span>

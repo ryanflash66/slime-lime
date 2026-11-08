@@ -616,3 +616,51 @@ html { scroll-behavior: smooth; }
   .cs-name { font-size: 20px; margin-bottom: 8px; }
   .cs-stats { gap: 5px 10px; }
 }
+
+/* ───────── Presence: players online + ghost cursors (presence.js) ───────── */
+.sl-online {
+  display: inline-flex; align-items: center; gap: 8px; padding: 2px 8px 2px 6px; margin: -2px 0;
+  border: 1px solid transparent; border-radius: 999px; background: transparent; cursor: pointer;
+  font: 500 11px/1.4 var(--font-mono); letter-spacing: 0.12em; color: var(--fg-2); white-space: nowrap;
+  transition: border-color 160ms var(--ease-out, ease-out), background-color 160ms var(--ease-out, ease-out);
+}
+.sl-online:hover, .sl-online[aria-expanded="true"] { border-color: var(--border-2); background: rgba(250,252,239,0.04); }
+.sl-online:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sl-online b { color: var(--fg-1); font-weight: 700; font-variant-numeric: tabular-nums; }
+.sl-live-dot { position: relative; width: 7px; height: 7px; border-radius: 50%; background: #3BEA7C; box-shadow: 0 0 8px rgba(59,234,124,0.8); flex: none; }
+.sl-live-dot::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 1px solid #3BEA7C; opacity: 0; animation: sl-live-ping 2.4s cubic-bezier(0.23,1,0.32,1) infinite; }
+@keyframes sl-live-ping { 0% { transform: scale(0.4); opacity: 0.9; } 70%, 100% { transform: scale(1.5); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .sl-live-dot::after { animation: none; } }
+
+.sl-online-pop {
+  position: fixed; z-index: 90; width: 268px; box-sizing: border-box; padding: 14px;
+  border: 1px solid var(--border-2); border-radius: 12px; background: rgba(6,13,8,0.96);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 24px 60px rgba(0,0,0,0.6); font: 500 10px/1.4 var(--font-mono); letter-spacing: 0.12em; color: var(--fg-3);
+}
+.sl-online-pop::before { content: ""; position: absolute; top: -1px; left: -1px; width: 8px; height: 8px; border: solid #3BEA7C; border-width: 2px 0 0 2px; border-top-left-radius: 12px; }
+.sl-online-big { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 2px; font: 700 30px/1 var(--font-mono); letter-spacing: -0.02em; color: var(--fg-1); font-variant-numeric: tabular-nums; }
+.sl-online-big small { font: 500 10px var(--font-mono); letter-spacing: 0.14em; color: #3BEA7C; }
+.sl-online-spark { display: block; width: 100%; height: 34px; margin: 8px 0 10px; }
+.sl-online-row { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border-1); color: var(--fg-2); }
+.sl-online-row b { color: var(--fg-1); font-variant-numeric: tabular-nums; }
+.sl-online-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0 0; margin-top: 2px;
+  border: 0; border-top: 1px solid var(--border-1); background: none; color: var(--fg-1); cursor: pointer; text-align: left; font: 600 12px/1.3 var(--font-ui); letter-spacing: 0; }
+.sl-online-toggle small { display: block; margin-top: 3px; font: 400 11px/1.35 var(--font-body); color: var(--fg-3); }
+.sl-online-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.sl-switch { position: relative; flex: none; width: 34px; height: 20px; border-radius: 999px; background: var(--border-2); transition: background-color 180ms var(--ease-out, ease-out); }
+.sl-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--fg-1); transition: transform 220ms cubic-bezier(0.23,1,0.32,1); }
+.sl-switch.is-on { background: var(--accent); }
+.sl-switch.is-on::after { transform: translateX(14px); background: #0E0F0A; }
+
+.sl-ghosts { position: fixed; inset: 0; z-index: 75; pointer-events: none; overflow: hidden; }
+.sl-ghost { position: absolute; left: 0; top: 0; will-change: transform; }
+.sl-ghost-arrow { display: block; transform-origin: 2px 2px; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.55)); }
+.sl-ghost-arrow path { fill: var(--g); fill-opacity: 0.88; stroke: rgba(6,13,8,0.9); stroke-width: 1.3; stroke-linejoin: round; }
+.sl-ghost-tag {
+  position: absolute; left: 16px; top: 18px; padding: 3px 7px; border-radius: 6px 999px 999px 999px;
+  background: var(--g); color: #0E0F0A; font: 700 10px/1.2 var(--font-mono); letter-spacing: 0.04em; white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.4); opacity: 0.92;
+}
+.sl-ghost.is-flip .sl-ghost-tag { left: auto; right: 2px; border-radius: 999px 6px 999px 999px; }
+.sl-ghost-ring { position: absolute; left: 2px; top: 2px; width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--g); opacity: 0; transform: translate(-50%,-50%); }
