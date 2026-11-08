@@ -153,7 +153,7 @@ function FlagshipPage({ flavor, onAdd }) {
 
   return (
     <>
-      <section style={{ position: 'relative', paddingTop: 'clamp(40px, 8vw, 80px)', paddingBottom: 'clamp(48px, 8vw, 80px)', overflow: 'hidden', borderBottom: '1px solid var(--border-1)' }} data-screen-label="01 PDP">
+      <section style={{ position: 'relative', paddingTop: 'clamp(40px, 8vw, 80px)', paddingBottom: 'clamp(48px, 8vw, 80px)', overflow: 'hidden', borderBottom: '1px solid var(--border-1)' }} data-level="Flagship" data-screen-label="01 PDP">
         <div className="hero-bg" style={{ opacity: 0.35 }}/>
         <div className="container" style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: 'clamp(24px, 4vw, 48px)', alignItems: 'center' }}>
           <div style={{ position: 'relative', height: bottleH + 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -217,7 +217,7 @@ function FlagshipPage({ flavor, onAdd }) {
         </div>
       </section>
 
-      <section className="section" data-screen-label="02 PDP Tabs">
+      <section className="section" data-level="Spec sheet" data-screen-label="02 PDP Tabs">
         <div className="container">
           <div
             ref={listRef}

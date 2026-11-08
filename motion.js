@@ -15,7 +15,7 @@
   var gsap = window.gsap;
   if (!gsap || !window.ScrollTrigger) { window.SLMotion = null; return; }
   var ST = window.ScrollTrigger;
-  gsap.registerPlugin(ST, window.ScrollToPlugin);
+  gsap.registerPlugin.apply(gsap, [ST, window.ScrollToPlugin, window.SplitText, window.ScrambleTextPlugin].filter(Boolean));
   // GSAP owns smooth scrolling now; CSS smooth scrolling would fight every scrollTo.
   document.documentElement.style.scrollBehavior = 'auto';
 
@@ -86,6 +86,24 @@
   // ───────── Scroll reveals + parallax ─────────
   var REVEAL = '.eyebrow, h1, h2, .display-xl, .display-lg, .h1, .h2, .body-lg, article, [data-reveal]';
 
+  // Headline glitch-in (SplitText chars) and eyebrow decode (ScrambleText), layered on the reveal.
+  var HEADLINE = 'h1, h2, .display-xl, .display-lg, .h1, .h2';
+  function textFx(el, delay) {
+    if (window.SplitText && el.matches(HEADLINE)) {
+      el.style.textWrap = 'wrap';
+      var split = window.SplitText.create(el, { type: 'words,chars', charsClass: 'sl-ch' });
+      el.classList.add('sl-glitch');
+      gsap.from(split.chars, {
+        yPercent: 70, rotationX: -85, autoAlpha: 0, duration: 0.7, ease: 'back.out(2.2)',
+        stagger: { each: 0.016, from: 'start' }, delay: delay,
+        onComplete: function () { split.revert(); el.style.textWrap = ''; el.classList.remove('sl-glitch'); },
+      });
+    } else if (window.ScrambleTextPlugin && el.classList.contains('eyebrow') && !el.children.length) {
+      var text = el.textContent;
+      gsap.to(el, { duration: 1.1, delay: delay, scrambleText: { text: text, chars: '01<>/|_#', speed: 0.5, revealDelay: 0.15 } });
+    }
+  }
+
   function pageIn(root) {
     if (!root) return function () {};
     var ctx = gsap.context(function () {
@@ -107,11 +125,13 @@
             onEnter: function (batch) {
               // first screen of a new page waits for the curtain to clear
               var first = performance.now() - born < 120;
+              var d0 = first ? 0.32 : 0;
               gsap.to(batch, {
                 autoAlpha: 1, '--rv': '0px', duration: 0.9, ease: 'expo.out',
-                stagger: 0.075, delay: first ? 0.32 : 0, overwrite: true,
+                stagger: 0.075, delay: d0, overwrite: true,
                 clearProps: 'opacity,visibility,--rv',
               });
+              batch.forEach(function (el, i) { textFx(el, d0 + i * 0.075); });
             },
           });
         }
@@ -123,14 +143,19 @@
           });
         });
       }
+      if (window.SLGame) window.SLGame.pageIn(root);
     }, root);
     // Web fonts and late images can shift layout after the triggers were measured.
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { ST.refresh(); });
     return function () { ctx.revert(); };
   }
 
+  // Programmatic scrolls (anchors, pips, CTAs) shouldn't count as player input (e.g. speed FX).
+  var autoUntil = 0;
+  function autoScrolling() { return performance.now() < autoUntil; }
   function scrollTo(target, opts) {
     opts = opts || {};
+    autoUntil = performance.now() + ((opts.instant || reduced()) ? 400 : (opts.duration || 1.1) * 1000 + 300);
     var header = document.querySelector('header');
     var off = header ? header.offsetHeight : 0;
     if (opts.instant || reduced()) {
@@ -202,5 +227,5 @@
     if (activeTilt) { releaseTilt(activeTilt); activeTilt = null; }
   });
 
-  window.SLMotion = { gsap: gsap, ScrollTrigger: ST, cover: cover, uncover: uncover, pageIn: pageIn, scrollTo: scrollTo, reduced: reduced };
+  window.SLMotion = { gsap: gsap, ScrollTrigger: ST, cover: cover, uncover: uncover, pageIn: pageIn, scrollTo: scrollTo, reduced: reduced, autoScrolling: autoScrolling };
 })();
