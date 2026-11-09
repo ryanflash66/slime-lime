@@ -43,6 +43,9 @@ function labelTexture(file, renderer) {
     t.anisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 4;
     res(t);
   }, undefined, rej));
+  // A failed load must not stay cached as a rejected promise, or later
+  // selections would reuse the rejection instead of retrying (Sourcery #14).
+  p.catch(() => { if (labelCache.get(file) === p) labelCache.delete(file); });
   labelCache.set(file, p);
   return p;
 }
@@ -267,7 +270,25 @@ function create(gltf, container, opts = {}) {
     const W = backdropCanvas.width, H = backdropCanvas.height;
     if (!W || !H) return;
     if (prevCanvas.width !== W || prevCanvas.height !== H) { prevCanvas.width = W; prevCanvas.height = H; prevTex.dispose(); }
-    prevCanvas.getContext('2d').drawImage(backdropCanvas, 0, 0);
+    const pctx = prevCanvas.getContext('2d');
+    // If a crossfade is already in progress, what the user actually sees is
+    // the backdrop with the outgoing snapshot blended on top of it. Snapshot
+    // that composite (Sourcery #14), so a rapid re-switch retargets from the
+    // current appearance instead of jumping back to the previous destination.
+    // (During a slide the prev plane is owned by the slide strip logic, so
+    // the plain backdrop snapshot below is the correct strip source there.)
+    if (backdropPrev.visible && slideStart < 0 && prevMat.opacity > 0) {
+      const old = document.createElement('canvas');
+      old.width = W; old.height = H;
+      old.getContext('2d').drawImage(prevCanvas, 0, 0);
+      pctx.globalAlpha = 1;
+      pctx.drawImage(backdropCanvas, 0, 0);
+      pctx.globalAlpha = prevMat.opacity;
+      pctx.drawImage(old, 0, 0);
+      pctx.globalAlpha = 1;
+    } else {
+      pctx.drawImage(backdropCanvas, 0, 0);
+    }
     prevTex.needsUpdate = true;
     prevMat.opacity = 1; backdropPrev.visible = true;
     if (Liquid) fromJuice.copy(Liquid.material.color);   // current (possibly mid-tween) colour: retargets cleanly
@@ -380,6 +401,20 @@ function create(gltf, container, opts = {}) {
       // three allocates immutable texture storage on first upload; a resized canvas would only
       // partially overwrite it (stale flavor showing through), so free it and let it re-allocate.
       backdropTex.dispose();
+      // If a crossfade is in progress, the outgoing snapshot would stretch
+      // across the resized plane (Sourcery #14). Re-fit it to the new size
+      // cover-style (crop, don't stretch) so its aspect ratio is preserved.
+      if (fadeStart >= 0 && backdropPrev.visible && prevCanvas.width && prevCanvas.height) {
+        const old = document.createElement('canvas');
+        old.width = prevCanvas.width; old.height = prevCanvas.height;
+        old.getContext('2d').drawImage(prevCanvas, 0, 0);
+        prevCanvas.width = cw; prevCanvas.height = ch; prevTex.dispose();
+        const pctx = prevCanvas.getContext('2d');
+        const s = Math.max(cw / old.width, ch / old.height);
+        const dw = old.width * s, dh = old.height * s;
+        pctx.drawImage(old, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+        prevTex.needsUpdate = true;
+      }
     }
     unitPx = (px / pw) * FAR;                       // canvas px per world unit at the bottle's depth
     bx = 0.5 + (root.position.x * FAR) / pw;
@@ -399,9 +434,13 @@ function create(gltf, container, opts = {}) {
   const fine = window.matchMedia && matchMedia('(hover: hover) and (pointer: fine)').matches;
   if (fine && !reduced && opts.interactive !== false) window.addEventListener('pointermove', onPointer, { passive: true });
 
-  const io = 'IntersectionObserver' in window ? new IntersectionObserver(([e]) => { visible = e.isIntersecting; if (visible) loop(); }) : null;
+  // When the stage is offscreen its animation loop does not run, so a fade
+  // measured from wall-clock time would already be over when the user scrolls
+  // back and the stage would snap instead of crossfading (Sourcery #14).
+  // Restart the fade clock when the stage becomes visible again.
+  const io = 'IntersectionObserver' in window ? new IntersectionObserver(([e]) => { visible = e.isIntersecting; if (visible) { if (fadeStart >= 0) fadeStart = performance.now(); loop(); } }) : null;
   if (io) io.observe(container);
-  const onVis = () => { if (!document.hidden) loop(); };
+  const onVis = () => { if (!document.hidden) { if (fadeStart >= 0) fadeStart = performance.now(); loop(); } };
   document.addEventListener('visibilitychange', onVis);
 
   const REST = opts.rest != null ? opts.rest : -0.3; // label turned slightly toward the copy
@@ -504,7 +543,12 @@ function create(gltf, container, opts = {}) {
     if (fadeStart >= 0) {
       const k = Math.min(1, (now - fadeStart) / FADE_MS), e = ease(k);
       prevMat.opacity = 1 - e;
-      if (Liquid) { Liquid.material.color.lerpColors(fromJuice, toJuice, e); Liquid.material.emissive.copy(Liquid.material.color); }
+      if (Liquid) {
+        // Reduced motion promises opacity-only fades (Sourcery #14): the liquid
+        // must not tween its colour, so snap it to the target instead.
+        if (reduced) { Liquid.material.color.copy(toJuice); Liquid.material.emissive.copy(toJuice); }
+        else { Liquid.material.color.lerpColors(fromJuice, toJuice, e); Liquid.material.emissive.copy(Liquid.material.color); }
+      }
       if (k >= 1) { fadeStart = -1; backdropPrev.visible = false; }
       dirty = true;
     }
