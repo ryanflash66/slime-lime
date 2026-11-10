@@ -368,7 +368,7 @@ function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, total, onP
           <button className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center' }}
             disabled={items.length === 0 || !['ready', 'cancelled', 'error', 'paid'].includes(pay.status)}
             aria-busy={['loading', 'paying', 'capturing'].includes(pay.status)}
-            onClick={pay.start}>
+            onClick={() => pay.start()}>
             {pay.status === 'loading' ? 'Loading PayPal…'
               : pay.status === 'paying' ? 'Waiting for PayPal…'
               : pay.status === 'capturing' ? 'Confirming payment…'

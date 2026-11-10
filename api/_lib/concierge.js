@@ -1,0 +1,278 @@
+// Flavor Concierge: the AI agent behind the chat panel.
+//
+// The model talks to the shopper and calls three tools:
+//   build_pack      picks bottles from the real lineup; priced here from catalog.js
+//   start_checkout  creates the PayPal sandbox order for that pack (server prices only)
+//   reorder_usual   rebuilds a past order from this device's order history ("get my usual")
+//   get_order       PayPal Agent Toolkit, used to confirm an order or answer "where's my order"
+//
+// The model never sets a price. It only names flavor ids and quantities; every amount the
+// shopper sees or pays comes from priceCart() in catalog.js.
+//
+// Model access goes through Vercel AI Gateway. On Vercel deployments the function's OIDC
+// token authenticates it, so no key is needed; AI_GATEWAY_API_KEY overrides that if set.
+
+const { generateText, tool } = require('ai');
+const { createOpenAI } = require('@ai-sdk/openai');
+const { z } = require('zod');
+const { FLAVOR_PRICES, priceCart, centsToValue } = require('./catalog');
+const { createOrder, paypalEnv } = require('./paypal');
+
+const DEFAULT_MODEL = 'google/gemini-3-flash';
+const MAX_BOTTLES = 48;
+const MAX_TURNS = 16;
+const MAX_CHARS = 600;
+
+// Tasting notes the model picks from. Facts come from the site copy (shell.jsx, flagship.jsx).
+const FLAVOR_NOTES = {
+  'lemon-lime': 'The original. Crisp lemon, real lime, electrolyte base. Clean, bright, least sweet-tasting of the citrus. Pick for focus and long sessions.',
+  'cherry':     'Tart and crisp sour cherry, clean finish. "The dark-mode flavor", built for late-night focus runs. Tart rather than sweet.',
+  'blue-rasp':  'Electric blue raspberry. Cold, sharp, iced. For people who like a sharp, cold, candy-ish hit.',
+  'mango':      'Bright tropical, real mango pulp with a citrus crackle. Loud flavor, low sugar. New for 2026.',
+  'grape':      'Concord grape with a twist. The sweetest and darkest of the lineup. Deep, weird, addictive. New for 2026.',
+  'watermelon': 'Light and clean watermelon with a salt-rim finish. Breezy, the gentlest flavor. Pre-game or warm-up pick.',
+};
+
+const FLAVOR_IDS = Object.keys(FLAVOR_PRICES);
+
+function lineupText() {
+  return FLAVOR_IDS.map(id => {
+    const f = FLAVOR_PRICES[id];
+    return `- ${id}: ${f.name}, $${centsToValue(f.cents)} per bottle. ${FLAVOR_NOTES[id]}`;
+  }).join('\n');
+}
+
+function historyText(history) {
+  if (!history.length) return 'This device has no past Slime Lime orders.';
+  return 'Past orders paid on this device, newest first (order id, date, items):\n' + history.map(h =>
+    `- ${h.orderId}, ${h.at.slice(0, 10)}: ${h.lines.map(l => `${l.qty} x ${l.id}`).join(', ')}`).join('\n');
+}
+
+function systemPrompt(currentPack, history) {
+  return [
+    'You are the Slime Lime Flavor Concierge, a shopping agent on the Slime Lime website.',
+    'Slime Lime is a clean-formula gaming soda. Every 12 fl oz bottle has 75mg slow-release caffeine with 100mg L-theanine, 5g sugar (0g added), 35 calories and six electrolytes.',
+    '',
+    'The lineup (use only these flavor ids):',
+    lineupText(),
+    '',
+    'Your job, in order:',
+    '1. Learn how the shopper plays and what they like to taste. Ask at most one short question if you truly need it; otherwise pick.',
+    `2. Call build_pack with a pack that fits them. Default to 12 bottles unless they ask for another size (6, 12 or 24 are common; max ${MAX_BOTTLES}). Mix 2 to 4 flavors unless they want one. The pack goes straight into their Fridge cart.`,
+    '3. In one or two sentences, say why the pack fits them, using the total the tool returned. Then ask if they want to check out.',
+    '4. When they say yes (or ask to buy, pay or check out), call start_checkout, then tell them to press the PayPal button below the chat to approve.',
+    '5. If they tell you they paid, call get_order with that order id and confirm the status in one line.',
+    '6. If they ask for "my usual", "the same as last time" or a reorder, call reorder_usual (newest order unless they name another), say what is in it with the returned total, then ask to check out. If they ask where an order is or what they got, use the history below and get_order.',
+    '',
+    'Rules:',
+    '- Never state a price, total or discount that a tool did not return. Never invent flavors.',
+    '- If they want changes, call build_pack again with the full new pack.',
+    '- This store runs on PayPal sandbox: test money only. Say so if they ask about real charges.',
+    '- No health or medical advice beyond the label facts above. Caffeine: suggest they check with a doctor if they are sensitive, under 18 or pregnant.',
+    '- Keep every reply under 60 words, friendly, a little gamer-flavored, no markdown headings, no emoji.',
+    '- If they go off topic, answer in a line and steer back to the pack.',
+    '',
+    historyText(history),
+    '',
+    currentPack && currentPack.length
+      ? `Current pack in their Fridge: ${currentPack.map(l => `${l.qty} x ${l.id}`).join(', ')}.`
+      : 'Their Fridge has no concierge pack yet.',
+  ].join('\n');
+}
+
+// Keeps only plain text turns from the browser, trimmed. Tool calls never come from the client.
+function cleanMessages(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
+    .slice(-MAX_TURNS)
+    .map(m => ({ role: m.role, content: m.content.slice(0, MAX_CHARS) }));
+}
+
+// The browser may send the pack it is holding; we re-validate it against the catalog.
+function cleanPack(raw) {
+  if (!Array.isArray(raw)) return [];
+  const lines = raw
+    .filter(l => l && FLAVOR_PRICES[l.id] && Number.isInteger(Number(l.qty)) && Number(l.qty) > 0)
+    .map(l => ({ id: l.id, qty: Math.min(MAX_BOTTLES, Number(l.qty)) }));
+  try { priceCart(lines); return lines; } catch (e) { return []; }
+}
+
+// Order history lives in the shopper's browser (localStorage); the server only re-checks it.
+const ORDER_ID_RE = /^[A-Z0-9]{8,32}$/;
+function cleanHistory(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, 5).map(h => {
+    if (!h || typeof h.orderId !== 'string' || !ORDER_ID_RE.test(h.orderId)) return null;
+    const lines = cleanPack(h.lines);
+    if (!lines.length) return null;
+    const at = typeof h.at === 'string' && !isNaN(Date.parse(h.at)) ? new Date(h.at).toISOString() : new Date(0).toISOString();
+    return { orderId: h.orderId, lines, at };
+  }).filter(Boolean);
+}
+
+function packView(lines) {
+  const priced = priceCart(lines);
+  return {
+    lines,
+    bottles: lines.reduce((s, l) => s + l.qty, 0),
+    total: priced.total,
+    items: lines.map(l => ({
+      id: l.id,
+      name: FLAVOR_PRICES[l.id].name,
+      qty: l.qty,
+      unit: centsToValue(FLAVOR_PRICES[l.id].cents),
+    })),
+  };
+}
+
+// PayPal Agent Toolkit, loaded lazily so a toolkit problem never takes the chat down.
+let toolkitTools = null;
+function paypalToolkitTools() {
+  if (toolkitTools) return toolkitTools;
+  const { PayPalAgentToolkit } = require('@paypal/agent-toolkit/ai-sdk');
+  const toolkit = new PayPalAgentToolkit({
+    clientId: process.env.PAYPAL_CLIENT_ID,
+    clientSecret: process.env.PAYPAL_CLIENT_SECRET,
+    configuration: {
+      actions: { orders: { get: true } },
+      context: { sandbox: paypalEnv() !== 'live' },
+    },
+  });
+  toolkitTools = toolkit.getTools();
+  return toolkitTools;
+}
+
+// Only order status and amounts go back to the model, never payer details.
+function summarizeOrder(raw) {
+  let o = raw;
+  if (typeof o === 'string') { try { o = JSON.parse(o); } catch (e) { return { note: o.slice(0, 300) }; } }
+  if (!o || typeof o !== 'object') return { note: 'No order details returned.' };
+  const pu = (o.purchase_units && o.purchase_units[0]) || {};
+  const capture = pu.payments && pu.payments.captures && pu.payments.captures[0];
+  return {
+    id: o.id,
+    status: o.status,
+    amount: pu.amount && pu.amount.value,
+    currency: pu.amount && pu.amount.currency_code,
+    items: (pu.items || []).map(i => `${i.quantity} x ${i.name}`),
+    captureStatus: capture && capture.status,
+  };
+}
+
+function gatewayModel(req) {
+  const apiKey = process.env.AI_GATEWAY_API_KEY
+    || (req.headers && req.headers['x-vercel-oidc-token'])
+    || process.env.VERCEL_OIDC_TOKEN;
+  if (!apiKey) {
+    const err = new Error('The concierge has no AI Gateway access on this host.');
+    err.status = 503;
+    throw err;
+  }
+  const gateway = createOpenAI({ apiKey, baseURL: 'https://ai-gateway.vercel.sh/v1', compatibility: 'compatible' });
+  return gateway.chat(process.env.CONCIERGE_MODEL || DEFAULT_MODEL);
+}
+
+async function runConcierge(req, body, opts = {}) {
+  const messages = cleanMessages(body.messages);
+  if (!messages.length || messages[messages.length - 1].role !== 'user') {
+    const err = new Error('Send a message first.');
+    err.status = 400;
+    throw err;
+  }
+
+  let pack = cleanPack(body.pack);
+  const history = cleanHistory(body.history);
+  let packChanged = false;
+  let checkout = null;
+
+  const lineSchema = z.object({
+    flavorId: z.enum(FLAVOR_IDS),
+    qty: z.number().int().min(1).max(MAX_BOTTLES),
+  });
+
+  const tools = {
+    build_pack: tool({
+      description: 'Put a flavor pack in the shopper\'s Fridge cart. Replaces any earlier concierge pack. Returns the server-priced total.',
+      parameters: z.object({
+        items: z.array(lineSchema).min(1).max(6).describe('One entry per flavor.'),
+      }),
+      execute: async ({ items }) => {
+        const merged = {};
+        for (const i of items) merged[i.flavorId] = (merged[i.flavorId] || 0) + i.qty;
+        const lines = Object.entries(merged).map(([id, qty]) => ({ id, qty }));
+        const bottles = lines.reduce((s, l) => s + l.qty, 0);
+        if (bottles > MAX_BOTTLES) return { error: `Packs top out at ${MAX_BOTTLES} bottles. Pick fewer.` };
+        pack = lines;
+        packChanged = true;
+        checkout = null;
+        const view = packView(lines);
+        return { bottles: view.bottles, total: `$${view.total}`, items: view.items.map(i => `${i.qty} x ${i.name} at $${i.unit}`) };
+      },
+    }),
+    reorder_usual: tool({
+      description: 'Put one of the shopper\'s past orders (from this device) back in their Fridge cart, priced at today\'s catalog prices. Defaults to the newest order.',
+      parameters: z.object({
+        orderId: z.string().optional().describe('A past order id from the history. Omit for the newest.'),
+      }),
+      execute: async ({ orderId }) => {
+        if (!history.length) return { error: 'No past orders on this device. Build a new pack instead.' };
+        const past = (orderId && history.find(h => h.orderId === orderId)) || history[0];
+        pack = past.lines.map(l => ({ ...l }));
+        packChanged = true;
+        checkout = null;
+        const view = packView(pack);
+        return { fromOrder: past.orderId, orderedOn: past.at.slice(0, 10), bottles: view.bottles, total: `$${view.total}`,
+          items: view.items.map(i => `${i.qty} x ${i.name} at $${i.unit}`) };
+      },
+    }),
+    start_checkout: tool({
+      description: 'Create the PayPal sandbox order for the current pack. Call only after the shopper agrees to buy. Returns the order id and total.',
+      parameters: z.object({}),
+      execute: async () => {
+        if (!pack.length) return { error: 'There is no pack yet. Call build_pack first.' };
+        const priced = priceCart(pack);
+        const order = await createOrder(priced);
+        checkout = { orderId: order.id, total: priced.total };
+        return { orderId: order.id, total: `$${priced.total}`, next: 'Shopper presses the PayPal button under the chat to approve.' };
+      },
+    }),
+  };
+
+  // get_order from PayPal Agent Toolkit, wrapped so payer details stay out of the model's context.
+  try {
+    const tk = paypalToolkitTools();
+    if (tk.get_order) {
+      tools.get_order = tool({
+        description: tk.get_order.description,
+        parameters: tk.get_order.parameters,
+        execute: async (args, opts) => {
+          try { return summarizeOrder(await tk.get_order.execute(args, opts)); }
+          catch (e) { return { error: 'Could not look that order up right now.' }; }
+        },
+      });
+    }
+  } catch (e) {
+    console.error('[concierge] PayPal Agent Toolkit unavailable:', e.message);
+  }
+
+  const result = await generateText({
+    model: opts.model || gatewayModel(req),
+    system: systemPrompt(pack, history),
+    messages,
+    tools,
+    maxSteps: 5,
+    maxTokens: 700,
+    temperature: 0.6,
+  });
+
+  const toolsUsed = result.steps.flatMap(s => (s.toolCalls || []).map(c => c.toolName));
+  return {
+    reply: (result.text || '').trim() || (checkout ? 'Order ready. Press the PayPal button below to approve.' : 'Done. Check your Fridge.'),
+    pack: packChanged && pack.length ? packView(pack) : null,
+    checkout,
+    toolsUsed,
+  };
+}
+
+module.exports = { runConcierge, FLAVOR_NOTES, cleanMessages, cleanPack, cleanHistory };
