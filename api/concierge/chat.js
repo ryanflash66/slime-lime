@@ -13,7 +13,7 @@ module.exports = async (req, res) => {
     res.status(200).json(out);
   } catch (err) {
     const status = err.status || 500;
-    console.error('[concierge]', status, err.message, err.paypal || '');
+    console.error('[concierge]', status, err.message, err.detail || '', err.paypal || '');
     res.status(status).json({
       error: status < 500 || status === 503 ? err.message : 'The concierge glitched. Try that again.',
     });
