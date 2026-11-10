@@ -94,7 +94,7 @@ The **Flavor Concierge** button (bottom right) opens a chat with an AI agent tha
 
 How it works:
 
-- `api/concierge/chat.js` (POST) runs the agent with the Vercel AI SDK (`ai` v4) through **Vercel AI Gateway** (default model `google/gemini-3-flash`, override with `CONCIERGE_MODEL`).
+- `api/concierge/chat.js` (POST) runs the agent with the Vercel AI SDK (`ai` v4), on Google Gemini directly or through Vercel AI Gateway (see the env vars below).
 - Agent tools (`api/_lib/concierge.js`):
   - `build_pack`: flavor ids and quantities only. Priced on the server by `api/_lib/catalog.js`.
   - `start_checkout`: creates the PayPal Orders v2 order for that pack, server-priced.
@@ -107,7 +107,8 @@ Environment variables (Vercel, Project, Settings, Environment Variables):
 
 | Name | Value |
 |---|---|
-| `AI_GATEWAY_API_KEY` | optional. On Vercel deployments the function's OIDC token authenticates AI Gateway, so no key is needed. Set this only if the gateway rejects the OIDC token, or for local `vercel dev`. |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Option A: a Google AI Studio (Gemini API) key. When set, the agent calls Gemini directly (`gemini-2.5-flash`, override with `CONCIERGE_GOOGLE_MODEL`). |
+| `AI_GATEWAY_API_KEY` | Option B, optional: Vercel AI Gateway. On Vercel deployments the function's OIDC token already authenticates the gateway, but the team needs a card on file before the gateway serves requests. |
 | `CONCIERGE_MODEL` | optional AI Gateway model id, default `google/gemini-3-flash` |
 
 The concierge reuses `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` from the checkout above.

@@ -9,16 +9,20 @@
 // The model never sets a price. It only names flavor ids and quantities; every amount the
 // shopper sees or pays comes from priceCart() in catalog.js.
 //
-// Model access goes through Vercel AI Gateway. On Vercel deployments the function's OIDC
-// token authenticates it, so no key is needed; AI_GATEWAY_API_KEY overrides that if set.
+// Model access, first match wins:
+//   GOOGLE_GENERATIVE_AI_API_KEY  Google Gemini API directly (a free Google AI Studio key works)
+//   otherwise Vercel AI Gateway: AI_GATEWAY_API_KEY, or on Vercel the function's OIDC token.
+//   (AI Gateway needs a card on file on the Vercel team before it serves requests.)
 
 const { generateText, tool } = require('ai');
 const { createOpenAI } = require('@ai-sdk/openai');
+const { createGoogleGenerativeAI } = require('@ai-sdk/google');
 const { z } = require('zod');
 const { FLAVOR_PRICES, priceCart, centsToValue } = require('./catalog');
 const { createOrder, paypalEnv } = require('./paypal');
 
-const DEFAULT_MODEL = 'google/gemini-3-flash';
+const DEFAULT_MODEL = 'google/gemini-3-flash';      // AI Gateway model id
+const DEFAULT_GOOGLE_MODEL = 'gemini-2.5-flash';     // Gemini API model id
 const MAX_BOTTLES = 48;
 const MAX_TURNS = 16;
 const MAX_CHARS = 600;
@@ -161,6 +165,10 @@ function summarizeOrder(raw) {
 }
 
 function gatewayModel(req) {
+  if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    const google = createGoogleGenerativeAI({ apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY });
+    return google(process.env.CONCIERGE_GOOGLE_MODEL || DEFAULT_GOOGLE_MODEL);
+  }
   const apiKey = process.env.AI_GATEWAY_API_KEY
     || (req.headers && req.headers['x-vercel-oidc-token'])
     || process.env.VERCEL_OIDC_TOKEN;
@@ -171,6 +179,18 @@ function gatewayModel(req) {
   }
   const gateway = createOpenAI({ apiKey, baseURL: 'https://ai-gateway.vercel.sh/v1', compatibility: 'compatible' });
   return gateway.chat(process.env.CONCIERGE_MODEL || DEFAULT_MODEL);
+}
+
+// Turns "the AI provider refused" into a clear 503 the panel can show.
+function providerError(e) {
+  const msg = String((e && e.message) || '');
+  if (/credit card|api key|unauthori[sz]ed|forbidden|permission|quota|billing/i.test(msg)) {
+    const err = new Error('The concierge AI is not switched on for this site yet.');
+    err.status = 503;
+    err.detail = msg.slice(0, 300);
+    return err;
+  }
+  return e;
 }
 
 async function runConcierge(req, body, opts = {}) {
@@ -256,7 +276,9 @@ async function runConcierge(req, body, opts = {}) {
     console.error('[concierge] PayPal Agent Toolkit unavailable:', e.message);
   }
 
-  const result = await generateText({
+  let result;
+  try {
+    result = await generateText({
     model: opts.model || gatewayModel(req),
     system: systemPrompt(pack, history),
     messages,
@@ -264,7 +286,10 @@ async function runConcierge(req, body, opts = {}) {
     maxSteps: 5,
     maxTokens: 700,
     temperature: 0.6,
-  });
+    });
+  } catch (e) {
+    throw providerError(e);
+  }
 
   const toolsUsed = result.steps.flatMap(s => (s.toolCalls || []).map(c => c.toolName));
   return {
