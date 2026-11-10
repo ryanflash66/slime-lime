@@ -24,6 +24,7 @@ A static, no-build React SPA. Loads React 18 + Babel-standalone from CDN, mounts
 ├── flagship.jsx            PDP (Lemon-Lime) — overview / science / nutrition / reviews tabs
 ├── subscribe.jsx           Subscribe builder — pack size → flavors → cadence → live price
 ├── story-faq.jsx           Story page + FAQ accordion
+├── concierge.jsx           Flavor Concierge chat panel (AI agent UI)
 ├── assets/
 │   ├── Bottle.jsx          high-fi glass juice bottle SVG (recolored per flavor)
 │   ├── bg-leaves.png       hero/leaf backdrop
@@ -82,6 +83,35 @@ Set these in Vercel (Project, Settings, Environment Variables), never in code:
 
 Keep `api/_lib/catalog.js` prices in sync with `FLAVORS` in `shell.jsx`. A plain static server (`python -m http.server`) has no `/api`, so the button shows "Checkout offline" there; use a Vercel preview or `vercel dev`.
 
+## Flavor Concierge (AI shopping agent)
+
+The **Flavor Concierge** button (bottom right) opens a chat with an AI agent that shops for you:
+
+1. You say how you play and what you like ("late-night ranked, nothing too sweet").
+2. The agent builds a pack from the real lineup and drops it into the Fridge cart.
+3. When you say yes, the agent creates the PayPal sandbox order. You approve it with the PayPal button in the chat.
+4. After you pay, the agent confirms the order with PayPal. Next time, "get my usual" reloads your last order.
+
+How it works:
+
+- `api/concierge/chat.js` (POST) runs the agent with the Vercel AI SDK (`ai` v4) through **Vercel AI Gateway** (default model `google/gemini-3-flash`, override with `CONCIERGE_MODEL`).
+- Agent tools (`api/_lib/concierge.js`):
+  - `build_pack`: flavor ids and quantities only. Priced on the server by `api/_lib/catalog.js`.
+  - `start_checkout`: creates the PayPal Orders v2 order for that pack, server-priced.
+  - `reorder_usual`: reloads a past order from this device's history, at today's prices.
+  - `get_order`: from the **PayPal Agent Toolkit** (`@paypal/agent-toolkit/ai-sdk`), used to confirm payment status. Only status and amounts are passed back to the model, never payer details.
+- The model never sets a price. Every amount comes from `catalog.js`.
+- Order history ("my usual") is stored only in the shopper's browser: `localStorage['sl-orders']`, the last 5 paid orders (order id, date, flavor ids and quantities, total). No accounts, no server database.
+
+Environment variables (Vercel, Project, Settings, Environment Variables):
+
+| Name | Value |
+|---|---|
+| `AI_GATEWAY_API_KEY` | optional. On Vercel deployments the function's OIDC token authenticates AI Gateway, so no key is needed. Set this only if the gateway rejects the OIDC token, or for local `vercel dev`. |
+| `CONCIERGE_MODEL` | optional AI Gateway model id, default `google/gemini-3-flash` |
+
+The concierge reuses `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` from the checkout above.
+
 ## Deploy
 
 Auto-deploys to Vercel on push to `main`. Production alias: **slime-lime-eta.vercel.app**.
@@ -93,4 +123,5 @@ For manual deploys: `vercel --prod` from the project root.
 - React 18 (CDN, dev build — design-prototype runtime)
 - Babel-standalone for in-browser JSX
 - Vanilla CSS with custom properties (no framework)
-- Static hosting on Vercel, plus Node serverless functions in `api/` for PayPal
+- Static hosting on Vercel, plus Node serverless functions in `api/` for PayPal and the Flavor Concierge
+- Vercel AI SDK v4 + Vercel AI Gateway, PayPal Agent Toolkit

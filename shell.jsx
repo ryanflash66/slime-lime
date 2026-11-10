@@ -128,6 +128,10 @@ function useCart() {
   };
   const remove = id => setCart(c => c.filter(i => i.id !== id));
   const clear = () => setCart([]);
+  // Flavor Concierge: the agent's pack becomes the whole fridge (lines are [{ id, qty }]).
+  const fillPack = lines => setCart(lines
+    .map(l => { const f = FLAVORS.find(x => x.id === l.id); return f ? { ...f, qty: l.qty } : null; })
+    .filter(Boolean));
   // Fridge close-up: set a flavor's exact count (0 clears the slot) without reopening anything.
   const setQty = (f, qty) => setCart(c => {
     if (qty <= 0) return c.filter(i => i.id !== f.id);
@@ -139,7 +143,7 @@ function useCart() {
   const count = cart.reduce((s, i) => s + i.qty, 0);
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
-  return { cart, count, total, add, replaceSubscription, inc, dec, remove, setQty, clear, cartOpen, setCartOpen };
+  return { cart, count, total, add, replaceSubscription, inc, dec, remove, setQty, clear, fillPack, cartOpen, setCartOpen };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -226,12 +230,15 @@ function useShellPayPal({ active, items, onPaid }) {
   }, [active]);
 
   // Called straight from the click handler so the PayPal popup isn't blocked.
-  const start = () => {
+  // Pass an orderId when the order already exists (the Flavor Concierge creates its own).
+  const start = existingOrderId => {
     const session = sessionRef.current;
     if (!session) return;
     setState(s => ({ ...s, status: 'paying', message: '', receipt: null }));
     const lines = itemsRef.current.map(i => ({ id: i.id, qty: i.qty, subscription: i.subscription || undefined }));
-    const orderPromise = shellPostJson('/api/paypal/orders', { items: lines })
+    const orderPromise = (typeof existingOrderId === 'string'
+      ? Promise.resolve({ orderId: existingOrderId })
+      : shellPostJson('/api/paypal/orders', { items: lines }))
       .then(d => ({ orderId: d.orderId }))
       .catch(e => {
         setState(s => ({ ...s, status: 'error', message: e.message || 'Could not start checkout' }));
