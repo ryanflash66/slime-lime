@@ -10,11 +10,18 @@
 //   window.addEventListener('sl-concierge', e => e.detail)
 //   detail.type: 'open' | 'close' | 'user-message' | 'thinking' | 'tool' (detail.tool = build_pack,
 //   reorder_usual, start_checkout or get_order) | 'pack' | 'checkout' | 'paid' | 'reply' | 'error'
+//   | 'subscribed' (sent by the Fridge once PayPal approves the crisper pack's subscription:
+//   detail.subscriptionId, cadence, total, lines)
 // and driven with window.slConcierge.open(), .close(), .send(text), .pay() (pay needs a user gesture).
 //
 // Order history ("get my usual") lives on this device only: localStorage['sl-orders'] keeps the
-// last 5 paid orders as { orderId, at, lines: [{ id, qty, subscription? }], total }. No account,
-// no server copy. The concierge can only look up (get_order) orders that are in this list.
+// last 5 of each kind, newest first, with no payer data:
+//   { kind: 'order', orderId, at, lines: [{ id, qty, subscription? }], total }   a paid one-time order
+//   { kind: 'subscription', subscriptionId, sig, cadence, at, lines: [{ id, qty }], total }
+//     an approved PayPal subscription (plain flavor ids; `sig` is the server's signature of the id)
+// Entries saved before subscriptions existed have no `kind` and count as 'order' (older ones can
+// hold '--sub' lines that were paid once). No account, no server copy. The concierge only sees
+// the orders, and can only look up (get_order) orders that are in this list.
 const { useState: useStateC, useEffect: useEffectC, useRef: useRefC } = React;
 
 const CC_ORDERS_KEY = 'sl-orders';
@@ -28,35 +35,35 @@ const ccEmit = (type, detail = {}) => {
 // for the rest of the visit, so "get my usual" and order lookups still work.
 const ccUnsavedOrders = [];
 
+const ccKind = o => (o && o.kind === 'subscription' ? 'subscription' : 'order');
+const ccEntryKey = o => (ccKind(o) === 'subscription' ? `sub:${o.subscriptionId}` : `order:${o && o.orderId}`);
+// Newest CC_MAX_ORDERS of each kind, so subscriptions never push orders out of "get my usual".
+function ccCap(list) {
+  const seen = { order: 0, subscription: 0 };
+  return list.filter(o => o && typeof o === 'object' && ++seen[ccKind(o)] <= CC_MAX_ORDERS);
+}
+// One-time orders only: what "get my usual", the order lookup and the concierge's history use.
+const ccOrdersOnly = list => list.filter(o => ccKind(o) === 'order');
+
+// Every entry (both kinds), newest first.
 function ccReadOrders() {
   let list = [];
   try {
     const raw = JSON.parse(localStorage.getItem(CC_ORDERS_KEY) || '[]');
-    if (Array.isArray(raw)) list = raw;
+    if (Array.isArray(raw)) list = raw.filter(o => o && typeof o === 'object');
   } catch (e) {}
   if (!ccUnsavedOrders.length) return list;
-  const ids = new Set(list.map(o => o && o.orderId));
-  return [...ccUnsavedOrders.filter(o => !ids.has(o.orderId)), ...list]
-    .sort((a, b) => String(b.at).localeCompare(String(a.at)))
-    .slice(0, CC_MAX_ORDERS);
+  const keys = new Set(list.map(ccEntryKey));
+  return ccCap([...ccUnsavedOrders.filter(o => !keys.has(ccEntryKey(o))), ...list]
+    .sort((a, b) => String(b.at).localeCompare(String(a.at))));
 }
 
-const ccNewSession = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : `s${Date.now()}${Math.random().toString(36).slice(2)}`);
-
-// Called after any captured payment (Fridge or concierge) with the capture receipt and the lines
-// that PayPal order was priced for, subscription lines included. Returns false if the order
-// could only be kept in memory.
-function slRecordOrder(receipt, items) {
-  if (!receipt || !receipt.orderId || !Array.isArray(items)) return false;
-  const lines = items
-    .filter(i => i && i.id && i.qty > 0)
-    .map(i => (i.subscription ? { id: i.id, qty: i.qty, subscription: i.subscription } : { id: i.id, qty: i.qty }));
-  if (!lines.length) return false;
-  const entry = { orderId: receipt.orderId, at: new Date().toISOString(), lines, total: receipt.amount || null };
+function ccSaveEntry(entry) {
   let saved = true;
   try {
-    // Read right before writing so an order another tab just saved is kept.
-    const next = [entry, ...ccReadOrders().filter(o => o.orderId !== entry.orderId)].slice(0, CC_MAX_ORDERS);
+    // Read right before writing so an entry another tab just saved is kept.
+    const key = ccEntryKey(entry);
+    const next = ccCap([entry, ...ccReadOrders().filter(o => ccEntryKey(o) !== key)]);
     localStorage.setItem(CC_ORDERS_KEY, JSON.stringify(next));
   } catch (e) {
     saved = false;
@@ -65,6 +72,34 @@ function slRecordOrder(receipt, items) {
   }
   window.dispatchEvent(new CustomEvent('sl-orders-changed'));
   return saved;
+}
+
+const ccNewSession = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : `s${Date.now()}${Math.random().toString(36).slice(2)}`);
+
+// Called after any captured payment (Fridge or concierge) with the capture receipt and the lines
+// that PayPal order was priced for. Returns false if the order could only be kept in memory.
+function slRecordOrder(receipt, items) {
+  if (!receipt || !receipt.orderId || !Array.isArray(items)) return false;
+  const lines = items
+    .filter(i => i && i.id && i.qty > 0)
+    .map(i => (i.subscription ? { id: i.id, qty: i.qty, subscription: i.subscription } : { id: i.id, qty: i.qty }));
+  if (!lines.length) return false;
+  return ccSaveEntry({ kind: 'order', orderId: receipt.orderId, at: new Date().toISOString(), lines, total: receipt.amount || null });
+}
+
+// Called by the Fridge once PayPal approves a subscription, with useShellPayPalSub's receipt:
+// { subscriptionId, sig, cadence, total, lines: [{ id, qty }] } (plain flavor ids).
+// Returns false if it could only be kept in memory.
+function slRecordSubscription(receipt) {
+  if (!receipt || typeof receipt.subscriptionId !== 'string' || !receipt.subscriptionId || !Array.isArray(receipt.lines)) return false;
+  const lines = receipt.lines
+    .filter(l => l && typeof l.id === 'string' && l.qty > 0)
+    .map(l => ({ id: l.id.replace(/--sub$/, ''), qty: l.qty }));
+  if (!lines.length) return false;
+  return ccSaveEntry({
+    kind: 'subscription', subscriptionId: receipt.subscriptionId, sig: receipt.sig || null,
+    cadence: receipt.cadence || null, at: new Date().toISOString(), lines, total: receipt.total || null,
+  });
 }
 
 const CC_STARTERS = [
@@ -130,7 +165,7 @@ function Concierge({ cart, fridgeOpen }) {
   const [input, setInput] = useStateC('');
   const [thinking, setThinking] = useStateC(false);
   const [checkout, setCheckout] = useStateC(null);
-  const [orders, setOrders] = useStateC(ccReadOrders);
+  const [orders, setOrders] = useStateC(() => ccOrdersOnly(ccReadOrders()));
   const listRef = useRefC(null);
   const panelRef = useRefC(null);
   const inputRef = useRefC(null);
@@ -148,7 +183,7 @@ function Concierge({ cart, fridgeOpen }) {
   if (!sessionRef.current) sessionRef.current = ccNewSession();
 
   useEffectC(() => {
-    const sync = () => setOrders(ccReadOrders());
+    const sync = () => setOrders(ccOrdersOnly(ccReadOrders()));
     window.addEventListener('sl-orders-changed', sync);
     window.addEventListener('storage', sync);
     return () => { window.removeEventListener('sl-orders-changed', sync); window.removeEventListener('storage', sync); };
@@ -228,13 +263,15 @@ function Concierge({ cart, fridgeOpen }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: history.slice(-20).map(m => ({ role: m.role, content: m.content })),
+          messages: history.slice(-20).map(m => ({ role: m.role, content: String(m.content || '').slice(0, 2000) })),
           pack: pack || cart.cart.filter(i => !i.subscription).map(i => ({ id: i.id, qty: i.qty })),
-          history: ccReadOrders().map(o => ({ orderId: o.orderId, at: o.at, lines: o.lines })),
+          history: ccOrdersOnly(ccReadOrders()).slice(0, CC_MAX_ORDERS).map(o => ({ orderId: o.orderId, at: o.at, lines: o.lines })),
           session: sessionRef.current,
         }),
       });
       const data = await res.json().catch(() => ({}));
+      // 429 is the Vercel Firewall rate limit (DAR-693). Say so plainly; nothing retries on its own.
+      if (res.status === 429) throw new Error('Easy there — the concierge needs a breather. Try again in a minute.');
       if (!res.ok) throw new Error(data.error || `The concierge is offline (${res.status}).`);
       (data.toolsUsed || []).forEach(tool => ccEmit('tool', { tool }));
       if (data.pack) {
@@ -317,6 +354,9 @@ function Concierge({ cart, fridgeOpen }) {
           {thinking && <div className="cc-msg is-assistant"><div className="cc-bubble cc-typing" aria-label="Concierge is thinking"><i/><i/><i/></div></div>}
         </div>
 
+        {/* Hands-free mic status + "Tap to talk" (voice.jsx); renders nothing in Legacy. */}
+        {window.VoiceBar && <window.VoiceBar/>}
+
         <form className="cc-form" onSubmit={onSubmit}>
           <input ref={inputRef} className="cc-input" value={input} onChange={e => setInput(e.target.value)}
             placeholder={last ? 'Try "get my usual"' : 'How do you play? What do you like?'} maxLength={500}
@@ -330,4 +370,4 @@ function Concierge({ cart, fridgeOpen }) {
   );
 }
 
-Object.assign(window, { Concierge, slRecordOrder });
+Object.assign(window, { Concierge, slRecordOrder, slRecordSubscription });
