@@ -108,8 +108,12 @@ same attemptId with a different pack still creates a new one.
 
 `id` is a plain flavor id. The server adds the `--sub` suffix itself, so a subscription costs
 exactly what the same `--sub` lines cost in the cart: `priceSubscription(lines, cadence)` in
-`catalog.js` runs them through `priceCart` (1 to 20 lines, quantity 1 to 96, known cadence) and
-returns `{ totalCents, total, packCode }`.
+`catalog.js` runs them through `priceCart(lines, { allowSubscription: true })` (1 to 20 lines,
+quantity 1 to 96, known cadence) and returns `{ totalCents, total, packCode }`.
+
+Without that option `priceCart` refuses any `--sub` line with a `400`. That is the one-time path
+(`POST /api/paypal/orders` and the concierge's `start_checkout`): PayPal can't bill a recurring
+pack and one-time bottles in one payment, so a subscription is only ever created here.
 
 The PayPal call is `POST /v1/billing/subscriptions` with:
 
@@ -139,6 +143,25 @@ called, so any PayPal error (even a 4xx such as `403 NOT_AUTHORIZED`) comes back
 
 Each call creates a new subscription. One the buyer never approves stays `APPROVAL_PENDING` and
 is never billed, so a retry or double click costs nothing.
+
+### In the browser
+
+The Fridge (`fridge.jsx`) shows two checkouts when the cart holds both kinds of line:
+"Start subscription · $X every <cadence>" for the crisper pack and "Pay with PayPal · $Y" for the
+one-time bottles. `useShellPayPalSub` in `shell.jsx` drives the first one on PayPal JS SDK v6:
+
+1. `shellLoadPayPal()` creates one SDK instance with
+   `components: ['paypal-payments', 'paypal-subscriptions']`; the hook checks
+   `findEligibleMethods({ paymentFlow: 'RECURRING_PAYMENT', currencyCode: 'USD' })` and creates
+   one `createPayPalSubscriptionPaymentSession({ onApprove, onCancel, onError })`.
+2. The click handler calls `session.start({ presentationMode: 'auto' }, promise)` synchronously
+   (so the popup isn't blocked), where `promise` is this endpoint's response mapped to
+   `{ subscriptionId }`. Each click gets a fresh `attemptId` (`crypto.randomUUID()`); a lost
+   response (network error or 5xx) is retried once with the same one.
+3. On approve, `slRecordSubscription` (`concierge.jsx`) stores
+   `{ kind: 'subscription', subscriptionId, sig, cadence, at, lines, total }` in
+   `localStorage['sl-orders']`, the subscribed crisper lines leave the cart, and a
+   `sl-concierge` event with `type: 'subscribed'` goes out. Cancel or error leaves the cart as is.
 
 ### Pack codes (`custom_id`)
 

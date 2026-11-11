@@ -163,8 +163,9 @@ function FAQPage() {
       ['Is it vegan / gluten-free?', "Yes to both. No animal products, no gluten, no GMOs. Kosher certified."],
     ]},
     { name: 'Subscription', qs: [
-      ['Can I pause my subscription?', "Anytime. From your dashboard, hit pause. We'll skip the next ship cycle and pick back up when you're ready."],
-      ['Can I swap flavors between orders?', "Yes — up to 24 hours before each ship date. No fees, no penalties."],
+      ['How is my subscription billed?', "Through PayPal. You approve your pack once, then PayPal bills it every 2 weeks, every month or every 3 months, whichever you picked. One-time bottles in your Fridge are paid separately."],
+      ['Can I pause my subscription?', "Yes. It's a PayPal subscription, so you can pause or cancel it anytime. Nothing bills while it's paused."],
+      ['Can I swap flavors between orders?', "Yes. Build a new loadout on the Subscribe page and start it, then cancel the old one. No fees, no penalties."],
       ['Is there a minimum commitment?', "No. Cancel after one order if it's not for you. We'd rather you actually like it."],
       ['How much do subscribers save?', "Up to 28% on monthly. Every order ships free."],
     ]},
