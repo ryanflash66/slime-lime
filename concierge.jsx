@@ -20,8 +20,9 @@
 //   { kind: 'subscription', subscriptionId, sig, cadence, at, lines: [{ id, qty }], total }
 //     an approved PayPal subscription (plain flavor ids; `sig` is the server's signature of the id)
 // Entries saved before subscriptions existed have no `kind` and count as 'order' (older ones can
-// hold '--sub' lines that were paid once). No account, no server copy. The concierge only sees
-// the orders, and can only look up (get_order) orders that are in this list.
+// hold '--sub' lines that were paid once). No account, no server copy. The concierge gets both
+// kinds and can only look up (get_order) entries in this list; a subscription counts only if the
+// server verifies its sig, and the sig never reaches the model.
 const { useState: useStateC, useEffect: useEffectC, useRef: useRefC } = React;
 
 const CC_ORDERS_KEY = 'sl-orders';
@@ -42,9 +43,6 @@ function ccCap(list) {
   const seen = { order: 0, subscription: 0 };
   return list.filter(o => o && typeof o === 'object' && ++seen[ccKind(o)] <= CC_MAX_ORDERS);
 }
-// One-time orders only: what "get my usual", the order lookup and the concierge's history use.
-const ccOrdersOnly = list => list.filter(o => ccKind(o) === 'order');
-
 // Every entry (both kinds), newest first.
 function ccReadOrders() {
   let list = [];
@@ -56,6 +54,18 @@ function ccReadOrders() {
   const keys = new Set(list.map(ccEntryKey));
   return ccCap([...ccUnsavedOrders.filter(o => !keys.has(ccEntryKey(o))), ...list]
     .sort((a, b) => String(b.at).localeCompare(String(a.at))));
+}
+
+// What the chat request carries (the server takes at most CC_MAX_ORDERS entries): the newest
+// subscription that has a sig, plus the newest orders, newest first. The sig goes to the server
+// only, which checks it and keeps it away from the model (api/_lib/concierge-subs.js).
+function ccChatHistory() {
+  const all = ccReadOrders();
+  const sub = all.find(o => ccKind(o) === 'subscription' && o.sig);
+  const orders = all.filter(o => ccKind(o) === 'order').slice(0, sub ? CC_MAX_ORDERS - 1 : CC_MAX_ORDERS);
+  return all.filter(o => o === sub || orders.includes(o)).map(o => (o === sub
+    ? { kind: 'subscription', subscriptionId: o.subscriptionId, sig: o.sig, cadence: o.cadence, at: o.at, lines: o.lines }
+    : { kind: 'order', orderId: o.orderId, at: o.at, lines: o.lines }));
 }
 
 function ccSaveEntry(entry) {
@@ -165,7 +175,8 @@ function Concierge({ cart, fridgeOpen }) {
   const [input, setInput] = useStateC('');
   const [thinking, setThinking] = useStateC(false);
   const [checkout, setCheckout] = useStateC(null);
-  const [orders, setOrders] = useStateC(() => ccOrdersOnly(ccReadOrders()));
+  // Both kinds: the "Get my usual" chip shows when there is any entry.
+  const [orders, setOrders] = useStateC(() => ccReadOrders());
   const listRef = useRefC(null);
   const panelRef = useRefC(null);
   const inputRef = useRefC(null);
@@ -183,7 +194,7 @@ function Concierge({ cart, fridgeOpen }) {
   if (!sessionRef.current) sessionRef.current = ccNewSession();
 
   useEffectC(() => {
-    const sync = () => setOrders(ccOrdersOnly(ccReadOrders()));
+    const sync = () => setOrders(ccReadOrders());
     window.addEventListener('sl-orders-changed', sync);
     window.addEventListener('storage', sync);
     return () => { window.removeEventListener('sl-orders-changed', sync); window.removeEventListener('storage', sync); };
@@ -265,7 +276,7 @@ function Concierge({ cart, fridgeOpen }) {
         body: JSON.stringify({
           messages: history.slice(-20).map(m => ({ role: m.role, content: String(m.content || '').slice(0, 2000) })),
           pack: pack || cart.cart.filter(i => !i.subscription).map(i => ({ id: i.id, qty: i.qty })),
-          history: ccOrdersOnly(ccReadOrders()).slice(0, CC_MAX_ORDERS).map(o => ({ orderId: o.orderId, at: o.at, lines: o.lines })),
+          history: ccChatHistory(),
           session: sessionRef.current,
         }),
       });
@@ -307,7 +318,8 @@ function Concierge({ cart, fridgeOpen }) {
 
   const onSubmit = e => { e.preventDefault(); send(input); };
   const openFridge = () => cart.setCartOpen(true);
-  const last = orders[0];
+  // A subscription saved without its sig can't be read by the server, so it doesn't count.
+  const last = orders.find(o => ccKind(o) === 'order' || o.sig);
 
   return (
     <>

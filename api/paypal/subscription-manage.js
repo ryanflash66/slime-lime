@@ -204,3 +204,7 @@ module.exports = async (req, res) => {
     sendError(res, err);
   }
 };
+
+// The concierge reads status the same way, server-side (api/_lib/concierge-subs.js).
+module.exports.fetchStatus = fetchStatus;
+module.exports.toStatus = toStatus;

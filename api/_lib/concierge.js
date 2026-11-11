@@ -3,10 +3,15 @@
 // The model talks to the shopper and calls three tools:
 //   build_pack      picks bottles from the real lineup; priced here from catalog.js
 //   start_checkout  creates the PayPal order for that pack (server prices only; sandbox unless PAYPAL_ENV=live)
-//   reorder_usual   rebuilds a past order from this device's order history ("get my usual")
+//   reorder_usual   "get my usual". With a live subscription in this device's history it builds
+//                   nothing and the agent offers an extra one-time pack of it (extraPack: true
+//                   builds that); otherwise it rebuilds the newest past order for checkout.
 //   get_order       PayPal Agent Toolkit, used to confirm an order or answer "where's my order".
 //                   Only orders in this browser's own history can be looked up, and only a
 //                   summary (status, amount, items) reaches the model, never payer details.
+//                   With no id it returns the newest order plus the subscription's live status;
+//                   an I- id reads that subscription (only ones whose sig verified, see
+//                   concierge-subs.js; the sig itself never reaches the model).
 //
 // The model never sets a price. It only names flavor ids and quantities; every amount the
 // shopper sees or pays comes from priceCart() in catalog.js.
@@ -28,6 +33,7 @@ const { createAnthropic } = require('@ai-sdk/anthropic');
 const { z } = require('zod');
 const { FLAVOR_PRICES, MAX_QTY_PER_LINE, MAX_LINES, priceCart, centsToValue } = require('./catalog');
 const { createOrder, getOrder, paypalEnv } = require('./paypal');
+const { browserSubscriptions, subscriptionStatusLookup, cadenceLabel, SUB_ID_RE } = require('./concierge-subs');
 
 const DEFAULT_MODEL = 'google/gemini-3-flash';      // AI Gateway model id
 const DEFAULT_GOOGLE_MODEL = 'gemini-3.8-flash';     // Gemini API model id (2.5 is closed to new keys)
@@ -59,13 +65,22 @@ function lineupText() {
   }).join('\n');
 }
 
-function historyText(history) {
-  if (!history.length) return 'This device has no past Slime Lime orders.';
-  return 'Past orders paid on this device, newest first (order id, date, items):\n' + history.map(h => {
-    const parts = h.lines.map(l => `${l.qty} x ${l.id}`);
-    if (h.subBottles) parts.push(`${h.subBottles} subscription bottles`);
-    return `- ${h.orderId}, ${h.at.slice(0, 10)}: ${parts.join(', ')}`;
-  }).join('\n');
+function historyText(history, subs = []) {
+  const out = [];
+  if (subs.length) {
+    out.push('PayPal subscriptions started on this device, newest first (subscription id, date, cadence, pack). reorder_usual and get_order read their live status:\n'
+      + subs.map(s => `- ${s.subscriptionId}, ${s.at.slice(0, 10)}: ${cadenceLabel(s.cadence) || 'cadence unknown'}, ${s.lines.map(l => `${l.qty} x ${l.id}`).join(', ') || 'pack unknown'}`).join('\n'));
+  }
+  if (!history.length) {
+    out.push('This device has no past one-time Slime Lime orders.');
+  } else {
+    out.push('Past one-time orders paid on this device, newest first (order id, date, items):\n' + history.map(h => {
+      const parts = h.lines.map(l => `${l.qty} x ${l.id}`);
+      if (h.subBottles) parts.push(`${h.subBottles} subscription bottles`);
+      return `- ${h.orderId}, ${h.at.slice(0, 10)}: ${parts.join(', ')}`;
+    }).join('\n'));
+  }
+  return out.join('\n');
 }
 
 function moneyRule() {
@@ -74,7 +89,7 @@ function moneyRule() {
     : '- This store runs on PayPal sandbox: test money only. Say so if they ask about real charges.';
 }
 
-function systemPrompt(currentPack, history, fridgeNote, openCheckout) {
+function systemPrompt(currentPack, history, fridgeNote, openCheckout, subs = []) {
   return [
     'You are the Slime Lime Flavor Concierge, a shopping agent on the Slime Lime website.',
     'Slime Lime is a clean-formula gaming soda. Every 12 fl oz bottle has 75mg slow-release caffeine with 100mg L-theanine, 5g sugar (0g added), 35 calories and six electrolytes.',
@@ -88,7 +103,11 @@ function systemPrompt(currentPack, history, fridgeNote, openCheckout) {
     '3. In one or two sentences, say why the pack fits them, using the total the tool returned. Then ask if they want to check out.',
     '4. When they say yes (or ask to buy, pay or check out), call start_checkout, then tell them to press the PayPal button below the chat to approve.',
     '5. If they tell you they paid, call get_order with that order id and confirm the status in one line.',
-    '6. If they ask for "my usual", "the same as last time" or a reorder, call reorder_usual (newest order unless they name another), say what is in it with the returned total, then ask to check out. If they ask where an order is or what they got, use the history below and get_order.',
+    '6. If they ask for "my usual", "the same as last time" or a reorder, call reorder_usual (no arguments unless they name a past order).',
+    '   - If it returns hasSubscription: true, it built nothing. Do not start a checkout and never set up a second subscription. Say the returned "say" line, e.g. "Your pack already comes every month. Want an extra one-time pack of it?"',
+    '   - If they then say yes to the extra pack, call reorder_usual with extraPack: true, then start_checkout, then give the total and tell them to press the PayPal button below the chat.',
+    '   - If it returns a rebuilt pack instead, the shopper already asked to buy it: call start_checkout right away in the same turn, then say what is in it with the returned total and tell them to press the PayPal button below the chat.',
+    '7. If they ask where their order is, what they got, or how their subscription is doing, call get_order with no id: it returns the newest order on this device and the subscription status. Answer in one or two lines from what it returns (status, items, amount, next delivery date).',
     '',
     'Rules:',
     '- Never state a price, total or discount that a tool did not return. Never invent flavors.',
@@ -99,7 +118,7 @@ function systemPrompt(currentPack, history, fridgeNote, openCheckout) {
     '- Keep every reply under 60 words, friendly, a little gamer-flavored, no markdown headings, no emoji.',
     '- If they go off topic, answer in a line and steer back to the pack.',
     '',
-    historyText(history),
+    historyText(history, subs),
     '',
     currentPack && currentPack.length
       ? `Current pack in their Fridge: ${currentPack.map(l => `${l.qty} x ${l.id}`).join(', ')}.`
@@ -149,13 +168,16 @@ function cleanPack(raw) {
 }
 
 // Order history lives in the shopper's browser (localStorage); the server only re-checks it.
-// Past quantities are kept as paid (up to the catalog line limit); subscription lines are
-// counted but not rebuilt by reorder_usual.
+// It mixes { kind: 'order', orderId, ... } entries (no kind = an older 'order') with
+// { kind: 'subscription', subscriptionId, sig, ... } ones. This keeps the newest 5 orders; the
+// subscription entries go through browserSubscriptions() (concierge-subs.js), which checks and
+// drops their sig. Past quantities are kept as paid (up to the catalog line limit); '--sub' lines
+// in an old order are counted but not rebuilt by reorder_usual.
 const ORDER_ID_RE = /^[A-Z0-9]{8,32}$/;
 const isSubLine = l => !!l && typeof l.id === 'string' && (!!l.subscription || l.id.endsWith('--sub'));
 function cleanHistory(raw) {
   if (!Array.isArray(raw)) return [];
-  return raw.slice(0, 5).map(h => {
+  return raw.slice(0, 20).filter(h => h && h.kind !== 'subscription').slice(0, 5).map(h => {
     if (!h || typeof h.orderId !== 'string' || !ORDER_ID_RE.test(h.orderId) || !Array.isArray(h.lines)) return null;
     const lines = cleanLines(h.lines.filter(l => !isSubLine(l)));
     if (!lines) return null;
@@ -225,6 +247,38 @@ function summarizeOrder(raw) {
     currency: pu.amount && pu.amount.currency_code,
     items: (pu.items || []).map(i => `${i.quantity} x ${i.name}`),
     captureStatus: capture && capture.status,
+  };
+}
+
+const ENDED_STATES = ['CANCELLED', 'EXPIRED'];
+const itemText = lines => lines.map(l => `${l.qty} x ${FLAVOR_PRICES[l.id].name}`);
+
+// A subscription's pack: what PayPal recorded (its custom_id) when the live read worked, else
+// what this device saved. One-time lines, merged by flavor; [] when neither is usable.
+function subPackLines(sub, live) {
+  const fromPayPal = live && Array.isArray(live.pack) ? cleanLines(live.pack) : null;
+  if (fromPayPal && fromPayPal.length) return fromPayPal;
+  return cleanLines(sub.lines) || [];
+}
+
+// What the model sees about a subscription: its live status when PayPal answered, else what this
+// device recorded. Built from an allow-list; never the sig, never subscriber details.
+function summarizeSubscription(sub, live) {
+  const lines = subPackLines(sub, live);
+  if (!live) {
+    return {
+      id: sub.subscriptionId, status: 'unknown', delivered: cadenceLabel(sub.cadence) || undefined, items: itemText(lines),
+      note: 'PayPal could not be reached just now. The subscription is set up on this device.',
+    };
+  }
+  return {
+    id: live.id,
+    status: live.status,
+    delivered: cadenceLabel(live.cadence) || cadenceLabel(sub.cadence) || undefined,
+    items: itemText(lines),
+    perDelivery: live.amount ? `$${live.amount}` : undefined,
+    nextDelivery: live.nextBillingTime ? live.nextBillingTime.slice(0, 10) : undefined,
+    lastPayment: live.lastPayment ? `$${live.lastPayment.amount}${live.lastPayment.time ? ` on ${live.lastPayment.time.slice(0, 10)}` : ''}` : undefined,
   };
 }
 
@@ -363,6 +417,10 @@ async function runConcierge(req, body, opts = {}) {
     ? `Their Fridge holds ${bottleCount(fridgeLines)} bottles, over the ${MAX_BOTTLES}-bottle concierge limit. They can pay for it from the Fridge, or you can build a new pack.`
     : '';
   const history = cleanHistory(body.history);
+  // Subscriptions whose sig verified, with the sig already dropped. Live status is read at most
+  // once per turn, and only when a tool needs it.
+  const subs = browserSubscriptions(body);
+  const subStatus = subscriptionStatusLookup();
   const env = paypalEnv();
 
   // Turn state lives here, outside any one model attempt. If Claude fails partway and the turn
@@ -423,13 +481,63 @@ async function runConcierge(req, body, opts = {}) {
       }),
     }),
     reorder_usual: tool({
-      description: 'Put one of the shopper\'s past orders (from this device) back in their Fridge cart, priced at today\'s catalog prices. Defaults to the newest order.',
+      description: 'The shopper\'s "usual". If this device has a live subscription it builds nothing and returns hasSubscription: true with the pack, cadence and a line to say; call it again with extraPack: true once they want an extra one-time pack of it. Otherwise it puts their newest past one-time order (or the one named) back in their Fridge cart, priced at today\'s catalog prices.',
       parameters: z.object({
-        orderId: z.string().optional().describe('A past order id from the history. Omit for the newest.'),
+        orderId: z.string().optional().describe('A past order id from the history. Omit for the usual.'),
+        extraPack: z.boolean().optional().describe('true only after the shopper said yes to an extra one-time pack of their subscription.'),
       }),
-      execute: serial('reorder_usual', async ({ orderId }) => {
+      execute: serial('reorder_usual', async ({ orderId, extraPack }) => {
+        const named = orderId ? String(orderId).trim().toUpperCase() : '';
+        const sub = named ? subs.find(s => s.subscriptionId === named) : subs[0];
+        if (named && SUB_ID_RE.test(named) && !sub) {
+          return { error: `Subscription ${named} is not linked to this device.` };
+        }
+        if (sub) {
+          const live = await subStatus(sub.subscriptionId);
+          const lines = subPackLines(sub, live);
+          const bottles = bottleCount(lines);
+          const tooBig = { error: `That pack has ${bottles} bottles, more than the ${MAX_BOTTLES}-bottle concierge limit. Offer to build a smaller one-time pack.` };
+          // Puts the subscription's pack in the Fridge as a one-time pack, at one-time prices.
+          const rebuild = extra => {
+            if (!lines.length) return { error: 'The subscription\'s pack could not be read. Offer to build a one-time pack with build_pack instead.' };
+            if (bottles > MAX_BOTTLES) return tooBig;
+            setPack(lines.map(l => ({ ...l })));
+            const view = packView(pack);
+            return { ...extra, oneTime: true, bottles: view.bottles, total: `$${view.total}`, items: view.items.map(i => `${i.qty} x ${i.name} at $${i.unit}`) };
+          };
+          const ended = !!live && ENDED_STATES.includes(live.status);
+          if (!ended) {
+            // A live (or unreadable) subscription: never a second one. Offer, or build, an extra
+            // one-time pack of the same flavors.
+            if (extraPack) {
+              return rebuild({ extraPackOf: sub.subscriptionId, note: 'A one-time order on top of the subscription. The subscription itself is unchanged.' });
+            }
+            const cadence = (live && live.cadence) || sub.cadence;
+            const label = cadenceLabel(cadence);
+            const offer = 'Want an extra one-time pack of it?';
+            let say = `Your pack already comes ${label || 'on a schedule'}. ${offer}`;
+            if (!live) say = `I can see your subscription${label ? ` (it comes ${label})` : ''}, but couldn't reach PayPal to check it just now. ${offer}`;
+            else if (live.status === 'SUSPENDED') say = `Your subscription is paused right now${label ? ` (it normally comes ${label})` : ''}. ${offer}`;
+            return {
+              hasSubscription: true,
+              subscriptionId: sub.subscriptionId,
+              status: live ? live.status : 'unknown (PayPal not reachable)',
+              cadence,
+              pack: itemText(lines),
+              bottles,
+              extraPackTotal: lines.length && bottles <= MAX_BOTTLES ? `$${packView(lines).total}` : undefined,
+              say,
+            };
+          }
+          // The subscription has ended. With no one-time orders (or when they named it), its pack
+          // is the usual, rebuilt as a one-time pack.
+          if (named || !history.length) {
+            return rebuild({ fromSubscription: sub.subscriptionId, subscriptionStatus: live.status,
+              note: 'That subscription has ended, so this is the same pack as a one-time order.' });
+          }
+        }
         if (!history.length) return { error: 'No past orders on this device. Build a new pack instead.' };
-        const past = orderId ? history.find(h => h.orderId === orderId) : history[0];
+        const past = named ? history.find(h => h.orderId === named) : history[0];
         if (!past) return { error: `Order ${orderId} is not in this device's history. Ask which past order they mean.` };
         if (!past.lines.length) {
           return { error: 'That order was a subscription only. Subscriptions are set up on the Subscribe page, not here.' };
@@ -446,7 +554,7 @@ async function runConcierge(req, body, opts = {}) {
       }),
     }),
     start_checkout: tool({
-      description: `Create the PayPal ${env === 'live' ? '' : 'sandbox '}order for the current pack. Call only after the shopper agrees to buy. Returns the order id and total.`,
+      description: `Create the PayPal ${env === 'live' ? '' : 'sandbox '}order for the current pack. Call only after the shopper agrees to buy (asking for their usual, or saying yes to an extra pack, counts). Returns the order id and total.`,
       parameters: z.object({}),
       execute: serial('start_checkout', async () => {
         if (!pack.length) return { error: 'There is no pack yet. Call build_pack first.' };
@@ -471,16 +579,35 @@ async function runConcierge(req, body, opts = {}) {
     console.error('[concierge] PayPal Agent Toolkit unavailable:', e.message);
   }
   tools.get_order = tool({
-    description: `${String((tk && tk.description) || 'Retrieves the order details from PayPal for a given order ID.').trim()}\nOnly orders from this device's order history, or a checkout you just created, can be looked up.`,
-    parameters: z.object({ id: z.string().describe('The PayPal order id.') }),
+    description: `${String((tk && tk.description) || 'Retrieves the order details from PayPal for a given order ID.').trim()}\nOnly orders from this device's order history, or a checkout you just created, can be looked up. Omit the id for "where's my order": it returns the newest order on this device and the live status of the shopper's subscription, if any. A subscription id (I-...) from the history returns that subscription's status.`,
+    parameters: z.object({ id: z.string().optional().describe('The PayPal order id, or a subscription id (I-...). Omit for the newest order plus the subscription status.') }),
     execute: async ({ id }, toolOpts) => {
       toolsUsed.push('get_order');
-      const orderId = String(id || '').trim().toUpperCase();
-      if (!allowedOrders.has(orderId)) {
+      const lookupOrder = async orderId => {
+        try { return summarizeOrder(tk ? await tk.execute({ id: orderId }, toolOpts) : await getOrder(orderId)); }
+        catch (e) { return { id: orderId, error: 'Could not look that order up right now.' }; }
+      };
+      const lookupSub = async sub => summarizeSubscription(sub, await subStatus(sub.subscriptionId));
+      const wanted = String(id || '').trim().toUpperCase();
+      if (!wanted) {
+        if (!history.length && !subs.length) return { error: 'There are no orders or subscriptions on this device yet.' };
+        const newest = history[0];
+        const [order, subscription] = await Promise.all([
+          newest ? lookupOrder(newest.orderId).then(o => ({ ...o, orderedOn: newest.at.slice(0, 10) })) : null,
+          subs[0] ? lookupSub(subs[0]) : null,
+        ]);
+        return { order: order || 'No one-time orders on this device.', subscription: subscription || 'No subscription on this device.' };
+      }
+      if (SUB_ID_RE.test(wanted)) {
+        const sub = subs.find(s => s.subscriptionId === wanted);
+        if (!sub) return { error: 'That subscription is not linked to this device, so it cannot be looked up here.' };
+        return { subscription: await lookupSub(sub) };
+      }
+      if (!allowedOrders.has(wanted)) {
         return { error: 'That order is not in this device\'s order history, so it cannot be looked up here.' };
       }
-      try { return summarizeOrder(tk ? await tk.execute({ id: orderId }, toolOpts) : await getOrder(orderId)); }
-      catch (e) { return { error: 'Could not look that order up right now.' }; }
+      const order = await lookupOrder(wanted);
+      return order.error ? { error: order.error } : order;
     },
   });
 
@@ -506,7 +633,7 @@ async function runConcierge(req, body, opts = {}) {
     try {
       const result = await generateText({
         model,
-        system: systemPrompt(pack, history, fridgeNote, checkout),
+        system: systemPrompt(pack, history, fridgeNote, checkout, subs),
         messages,
         tools,
         maxSteps: 5,
