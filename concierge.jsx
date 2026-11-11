@@ -9,7 +9,8 @@
 // "watch the agent work" layer can hook in without touching this file:
 //   window.addEventListener('sl-concierge', e => e.detail)
 //   detail.type: 'open' | 'close' | 'user-message' | 'thinking' | 'tool' (detail.tool = build_pack,
-//   reorder_usual, start_checkout or get_order) | 'pack' | 'checkout' | 'paid' | 'reply' | 'error'
+//   reorder_usual, start_checkout, empty_fridge or get_order) | 'pack' | 'cleared' (the agent
+//   emptied the Fridge) | 'checkout' | 'paid' | 'reply' | 'error'
 //   | 'subscribed' (sent by the Fridge once PayPal approves the crisper pack's subscription:
 //   detail.subscriptionId, cadence, total, lines; the concierge sends it too, with source: 'concierge')
 //   | 'subscription' (the agent created a PayPal subscription to approve: detail.subscription,
@@ -327,6 +328,27 @@ function Concierge({ cart, fridgeOpen }) {
     return () => window.removeEventListener('sl-paid', onPaidAnywhere);
   }, []);
 
+  // An emptied Fridge (its button, or the agent's empty_fridge) retires the PayPal buttons still
+  // waiting here for those bottles: nothing is left to pay for. An approved subscription stays.
+  useEffectC(() => {
+    const onEmptied = () => {
+      cadenceRef.current = null;
+      const c = checkoutRef.current;
+      const s = subscriptionRef.current;
+      const dropCheckout = !!(c && !c.paid);
+      const dropSub = !!(s && !s.approved);
+      if (dropCheckout) { setCheckout(null); ccEmit('checkout', { checkout: null }); }
+      if (dropSub) { setSubscription(null); ccEmit('subscription', { subscription: null }); }
+      // Emptied from the Fridge while a PayPal button was up: say why it went. When the agent
+      // empties it, its own reply says so.
+      if ((dropCheckout || dropSub) && !sendingRef.current) {
+        setMsgs(m => [...m, { role: 'assistant', content: 'You emptied your Fridge, so I closed my PayPal checkout.' }]);
+      }
+    };
+    window.addEventListener('sl-fridge-emptied', onEmptied);
+    return () => window.removeEventListener('sl-fridge-emptied', onEmptied);
+  }, []);
+
   const pay = window.useShellPayPal({
     active: open && !!checkout,
     items: cart.cart,
@@ -462,6 +484,8 @@ function Concierge({ cart, fridgeOpen }) {
       if (res.status === 429) throw new Error('Easy there — the concierge needs a breather. Try again in a minute.');
       if (!res.ok) throw new Error(data.error || `The concierge is offline (${res.status}).`);
       (data.toolsUsed || []).forEach(tool => ccEmit('tool', { tool }));
+      // "Empty my fridge": everything goes first, so a pack built after it in the same turn stays.
+      if (data.cleared) { cart.empty(); ccEmit('cleared', {}); }
       if (data.pack) {
         cart.fillPack(data.pack.lines);
         setCheckout(null);

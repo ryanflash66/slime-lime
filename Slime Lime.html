@@ -91,6 +91,8 @@ function App() {
         onSetQty={cart.setQty}
         onInc={cart.inc}
         onDec={cart.dec}
+        onEmpty={cart.empty}
+        onRestore={cart.restore}
         onPaid={(receipt, lines) => {
           // Record and remove the lines this PayPal order was priced for, not whatever the cart holds now.
           const paid = lines && lines.length ? lines : cart.cart.filter(i => !i.subscription).map(i => ({ id: i.id, qty: i.qty }));

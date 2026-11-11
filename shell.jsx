@@ -135,6 +135,15 @@ function useCart() {
   const syncSubscription = lines => setCart(c => [...c.filter(i => !i.subscription), ...lines]);
   const remove = id => setCart(c => c.filter(i => i.id !== id));
   const clear = () => setCart([]);
+  // "Empty fridge" (the Fridge's button or the agent's empty_fridge): every line goes, the
+  // subscription pack too. The concierge hears 'sl-fridge-emptied' and drops any PayPal button it
+  // still shows for those bottles. restore() is the Fridge's Undo; it never overwrites bottles
+  // added since.
+  const empty = () => {
+    setCart([]);
+    window.dispatchEvent(new CustomEvent('sl-fridge-emptied'));
+  };
+  const restore = lines => setCart(c => (c.length ? c : lines));
   // Flavor Concierge: the agent's pack replaces the one-time bottles in the fridge
   // (lines are [{ id, qty }]). Subscription lines stay put: the agent never touches them.
   const fillPack = lines => setCart(c => [
@@ -162,7 +171,7 @@ function useCart() {
   const count = cart.reduce((s, i) => s + i.qty, 0);
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
-  return { cart, count, total, add, replaceSubscription, syncSubscription, inc, dec, remove, setQty, clear, fillPack, removePaid, cartOpen, setCartOpen };
+  return { cart, count, total, add, replaceSubscription, syncSubscription, inc, dec, remove, setQty, clear, empty, restore, fillPack, removePaid, cartOpen, setCartOpen };
 }
 
 // ─────────────────────────────────────────────────────────────
