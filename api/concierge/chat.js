@@ -8,10 +8,13 @@
 // The per-IP rate limit lives in Vercel Firewall (DAR-693), not here.
 const { runConcierge } = require('../_lib/concierge');
 const { readJson } = require('../_lib/paypal');
+const { MAX_LINES } = require('../_lib/catalog');
 
 const MAX_BODY_BYTES = 32 * 1024;
-const MAX_MESSAGES = 60;
-const MAX_MESSAGE_CHARS = 2000;
+const MAX_MESSAGES = 20;       // the panel sends its last 20; the model sees the last 16 (MAX_TURNS)
+const MAX_MESSAGE_CHARS = 2000; // hard cap; the model sees at most 600 per message (MAX_CHARS)
+const MAX_PACK_LINES = MAX_LINES; // 20, the catalog's cart line limit
+const MAX_HISTORY = 5;         // the panel sends at most 5 orders (CC_MAX_ORDERS); cleanHistory reads 5
 
 function tooBig(req, body) {
   const declared = Number(req.headers && req.headers['content-length']);
@@ -28,9 +31,14 @@ module.exports = async (req, res) => {
   const body = readJson(req);
   if (tooBig(req, body)) return res.status(413).json({ error: 'That message is too long.' });
   const { messages } = body;
-  if (!Array.isArray(messages) || messages.length > MAX_MESSAGES
+  if (!Array.isArray(messages) || !messages.length) return res.status(400).json({ error: 'Send a message first.' });
+  if (messages.length > MAX_MESSAGES
     || messages.some(m => !m || typeof m.content !== 'string' || m.content.length > MAX_MESSAGE_CHARS)) {
     return res.status(400).json({ error: 'That conversation is too long. Reload the page to start a new one.' });
+  }
+  const { pack, history } = body;
+  if ((Array.isArray(pack) && pack.length > MAX_PACK_LINES) || (Array.isArray(history) && history.length > MAX_HISTORY)) {
+    return res.status(400).json({ error: 'That cart or order history is too big for the concierge.' });
   }
   try {
     const out = await runConcierge(req, body);

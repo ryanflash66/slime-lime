@@ -510,7 +510,7 @@ async function runConcierge(req, body, opts = {}) {
         messages,
         tools,
         maxSteps: 5,
-        maxTokens: 1000,
+        maxTokens: 700, // DAR-693 cost cap, with maxSteps 5
         // With a fallback waiting, retry Claude once (429 / 5xx / overloaded), not twice.
         maxRetries: next ? 1 : 2,
         abortSignal: timeout,
