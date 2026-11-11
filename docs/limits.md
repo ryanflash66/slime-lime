@@ -42,8 +42,8 @@ rest of the site is untouched.
 
 | Rule | Matches | Limit |
 |---|---|---|
-| `concierge-rate-limit` | path starts with `/api/concierge/chat` AND method equals `POST` | 20 per 60 s per IP, then 429 for 60 s |
-| `paypal-rate-limit` | path matches `^/api/paypal/(orders\|subscriptions\|subscription-manage)` (any method) | 10 per 60 s per IP, then 429 for 60 s |
+| `concierge-rate-limit` | path starts with `/api/concierge/chat` AND method equals `POST` | 20 per 60 s per IP, then 429 until the window resets (live) |
+| `paypal-rate-limit` | path matches `^/api/paypal/(orders\|subscriptions\|subscription-manage)` (any method) | 10 per 60 s per IP (not available on the current plan) |
 
 Paths match by prefix rather than exact equality, so `/api/concierge/chat/` or
 `/api/concierge/chat.js` can't reach the function around the rule.
@@ -56,12 +56,21 @@ Two trade-offs to know about:
   the shopper already approved, and the site never calls plans from the browser. Add them to the
   regex if they ever see abuse.
 
-**Status: not applied yet.** On Nov 11, 2026 the project had no firewall configuration
-(`get_firewall_config` returned 404 "Config not found"; `vercel firewall status` said "Not
-configured"). Adding a rule to a missing config fails with 404, and creating the config
-(`put_firewall_config`) needs Ryan's go-ahead, because it changes production. Until it is
-applied, the code caps above are the only protection. Rule ids are assigned by Vercel when the
-rules are created; record them here afterwards.
+**Status (Nov 11, 2026): `concierge-rate-limit` is live; `paypal-rate-limit` is not.**
+
+- `concierge-rate-limit` (id `rule_concierge_rate_limit_pxg4bc`) was created with
+  `vercel firewall rules add` and published. Check on production: 23 quick POSTs of `{}`
+  returned 400 nineteen times, then 429, and the rest of the site still answered 200.
+- **No action duration ("hold").** The first version used `actionDuration: "1m"`. After the
+  first 429, Vercel answered 403 to *every* request from that IP, the storefront included, for
+  about 70 s. A shopper on shared Wi-Fi could lose the whole site that way, so the rule was
+  re-published without the hold: only chat POSTs over the limit get 429, until the window resets.
+- `paypal-rate-limit` was refused: "Rate limiting is not available for this plan (402)". The
+  current Vercel plan allows one rate-limit rule, and the concierge rule guards the model credit,
+  so it gets that slot. The PayPal endpoints rely on the code caps until the plan changes.
+- The MCP `put_firewall_config` / `update_firewall_config` tools both answered 404 "Config not
+  found" for a project with no firewall config yet; the CLI (`vercel firewall rules add`, then
+  `vercel firewall publish`) works.
 
 ### Apply the rules
 
@@ -83,8 +92,7 @@ The request body:
       ] }],
       "action": { "mitigate": {
         "action": "rate_limit",
-        "rateLimit": { "algo": "fixed_window", "window": 60, "limit": 20, "keys": ["ip"], "action": "rate_limit" },
-        "actionDuration": "1m"
+        "rateLimit": { "algo": "fixed_window", "window": 60, "limit": 20, "keys": ["ip"], "action": "rate_limit" }
       } }
     },
     {
@@ -96,8 +104,7 @@ The request body:
       ] }],
       "action": { "mitigate": {
         "action": "rate_limit",
-        "rateLimit": { "algo": "fixed_window", "window": 60, "limit": 10, "keys": ["ip"], "action": "rate_limit" },
-        "actionDuration": "1m"
+        "rateLimit": { "algo": "fixed_window", "window": 60, "limit": 10, "keys": ["ip"], "action": "rate_limit" }
       } }
     }
   ]
