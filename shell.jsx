@@ -410,9 +410,19 @@ function useShellPayPalSub({ active, items, onSubscribed }) {
 
   // Called straight from the click handler, so the popup opens on the click's user activation
   // while the server creates the subscription.
-  const start = () => {
+  // Pass `existing` ({ subscriptionId, sig, cadence, total, lines }) when the subscription already
+  // exists (the Flavor Concierge creates its own on the server); then nothing new is created.
+  const start = existing => {
     const session = sessionRef.current;
     if (!session) return;
+    if (existing && typeof existing.subscriptionId === 'string' && existing.subscriptionId) {
+      const lines = (existing.lines || []).map(l => ({ id: l.id, qty: l.qty }));
+      pendingRef.current = { lines, pack: lines, cadence: existing.cadence || null,
+        subscriptionId: existing.subscriptionId, sig: existing.sig || null, total: existing.total || null };
+      setState(s => ({ ...s, status: 'subscribing', message: '', receipt: null }));
+      Promise.resolve(session.start({ presentationMode: 'auto' }, Promise.resolve({ subscriptionId: existing.subscriptionId }))).catch(() => {});
+      return;
+    }
     const subs = itemsRef.current.filter(i => i && i.subscription && i.qty > 0);
     if (!subs.length) return;
     // A cart holds one subscription pack (one cadence); lines on another cadence stay put.

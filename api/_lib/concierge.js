@@ -13,8 +13,22 @@
 //                   an I- id reads that subscription (only ones whose sig verified, see
 //                   concierge-subs.js; the sig itself never reaches the model).
 //
+// Subscriptions (DAR-701, DAR-702):
+//   set_cadence          prices the current pack as a subscription (biweekly, monthly, quarterly)
+//   start_subscription   creates the PayPal subscription for it (startSubscription in
+//                        subscriptions.js); the shopper approves it with the panel's PayPal button
+//   subscription_status  reads one of this device's subscriptions (read-only, no confirm)
+//   pause_subscription, resume_subscription, cancel_subscription
+//                        change nothing: each returns a pending action. The change only runs on
+//                        the next request, when the browser sends { confirm: { action,
+//                        subscriptionId } } with the server-signed pending action (button, the
+//                        voice loop's 'sl-confirm' event, or a typed "confirm"), within 30 s.
+// Each subscription's `sig` (subsign.js) stays between the browser and this file: the browser
+// sends its subscriptions with their sigs, the tools act only on those whose sig verifies, and the
+// model only ever sees ids and states.
+//
 // The model never sets a price. It only names flavor ids and quantities; every amount the
-// shopper sees or pays comes from priceCart() in catalog.js.
+// shopper sees or pays comes from priceCart() / priceSubscription() in catalog.js.
 //
 // Model access, first match wins:
 //   ANTHROPIC_API_KEY             Claude Haiku 5.5 (CONCIERGE_MODEL overrides the Claude model id).
@@ -31,9 +45,12 @@ const { createOpenAI } = require('@ai-sdk/openai');
 const { createGoogleGenerativeAI } = require('@ai-sdk/google');
 const { createAnthropic } = require('@ai-sdk/anthropic');
 const { z } = require('zod');
-const { FLAVOR_PRICES, MAX_QTY_PER_LINE, MAX_LINES, priceCart, centsToValue } = require('./catalog');
+const { FLAVOR_PRICES, MAX_QTY_PER_LINE, MAX_LINES, priceCart, centsToValue,
+  CADENCES, unitCents, priceSubscription } = require('./catalog');
 const { createOrder, getOrder, paypalEnv } = require('./paypal');
 const { browserSubscriptions, subscriptionStatusLookup, cadenceLabel, SUB_ID_RE } = require('./concierge-subs');
+const { startSubscription, manageSubscription, SUBSCRIPTION_ID_RE, ATTEMPT_ID_RE } = require('./subscriptions');
+const subsign = require('./subsign');
 
 const DEFAULT_MODEL = 'google/gemini-3-flash';      // AI Gateway model id
 const DEFAULT_GOOGLE_MODEL = 'gemini-3.8-flash';     // Gemini API model id (2.5 is closed to new keys)
@@ -128,6 +145,196 @@ function systemPrompt(currentPack, history, fridgeNote, openCheckout, subs = [])
       ? `A PayPal order (${openCheckout.orderId}, $${openCheckout.total}) is already open for this pack. Do not start another checkout unless the pack changes; tell them to press the PayPal button below the chat to approve.`
       : '',
   ].join('\n').trim();
+}
+
+// ---- subscriptions -----------------------------------------------------------------------------
+
+const CADENCE_IDS = Object.keys(CADENCES);
+const SUB_ACTIONS = ['pause', 'resume', 'cancel'];
+const PENDING_TTL_MS = 30000;   // a pending pause/resume/cancel is discarded after 30 s
+const PENDING_GRACE_MS = 5000;  // network time between the browser's timer and this server
+const CONFIRM_BUDGET_MS = 15000; // a confirmed change waits this long for PayPal, inside the turn budget
+const MAX_SUBS = 6;
+const SIG_RE = /^[A-Za-z0-9_-]{20,100}$/;
+// The shopper's go-ahead, the whole message: "confirm", "Confirm.", "yes confirm", "I confirm",
+// "Confirm pause", "Confirm cancellation". Same pattern as CC_CONFIRM_RE in concierge.jsx, so
+// "don't confirm" or a question that mentions confirming never runs a change.
+const CONFIRM_WORD_RE = /^\s*(yes[,.!]?\s+)?(i\s+)?confirm(ed)?(\s+(it|that|the\s+\w+|pause|resume|cancel(lation)?))?\s*[.!]*\s*$/i;
+// Pending tokens already used on this instance, so a resent confirm can't run the action twice.
+// Best effort (per warm instance, no shared store); tokens expire after PENDING_TTL_MS anyway.
+const usedTokens = new Map(); // token -> expiry time
+function spendToken(token, now) {
+  for (const [t, exp] of usedTokens) if (exp < now) usedTokens.delete(t);
+  if (usedTokens.has(token)) return false;
+  usedTokens.set(token, now + PENDING_TTL_MS + PENDING_GRACE_MS);
+  return true;
+}
+
+const everyText = cadence => (CADENCES[cadence] ? CADENCES[cadence].label : 'each cycle');
+const linesText = lines => lines.map(l => `${l.qty} x ${FLAVOR_PRICES[l.id] ? FLAVOR_PRICES[l.id].name.replace('Slime Lime ', '') : l.id}`).join(', ');
+
+// The browser's subscriptions ({ subscriptionId, sig, cadence?, lines?, at?, approved? }): the
+// approved ones from its order history plus any the concierge created this visit. Only entries
+// whose sig verifies are kept, so the tools can only ever act on subscriptions this browser holds.
+function cleanSubscriptions(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  return raw.slice(0, MAX_SUBS).map(s => {
+    if (!s || typeof s.subscriptionId !== 'string' || !SUBSCRIPTION_ID_RE.test(s.subscriptionId)) return null;
+    if (typeof s.sig !== 'string' || !SIG_RE.test(s.sig) || !subsign.verify(s.subscriptionId, s.sig)) return null;
+    if (seen.has(s.subscriptionId)) return null;
+    seen.add(s.subscriptionId);
+    const lines = (Array.isArray(s.lines) && cleanLines(s.lines)) || [];
+    const at = typeof s.at === 'string' && !isNaN(Date.parse(s.at)) ? new Date(s.at).toISOString() : null;
+    return {
+      subscriptionId: s.subscriptionId,
+      sig: s.sig,
+      cadence: CADENCE_IDS.includes(s.cadence) ? s.cadence : null,
+      lines,
+      at,
+      approved: s.approved !== false,
+    };
+  }).filter(Boolean);
+}
+
+// What the model may know about a subscription: never the sig.
+// `listed` holds ids the order history above already shows, so they aren't repeated.
+function subscriptionsText(all, listed = new Set()) {
+  const subs = all.filter(s => !listed.has(s.subscriptionId));
+  if (!subs.length) return listed.size ? '' : 'This device has no Slime Lime subscriptions.';
+  return `${listed.size ? 'More subscriptions' : 'Subscriptions'} on this device (id, cadence, pack, started; subscription_status, pause_subscription, resume_subscription and cancel_subscription work on these and the ones listed above):\n`
+    + subs.map(s => `- ${s.subscriptionId}, ${s.cadence ? everyText(s.cadence) : 'cadence unknown'}, `
+      + `${s.lines.length ? linesText(s.lines) : 'pack unknown'}, ${s.at ? s.at.slice(0, 10) : 'date unknown'}`
+      + `${s.approved ? '' : ', created by you this visit and not yet approved in PayPal'}`).join('\n');
+}
+
+// A pending action is signed when it is handed out, so a confirm can only run the exact action the
+// agent proposed, on that subscription, within PENDING_TTL_MS.
+function pendingToken(action, subscriptionId, issuedAt) {
+  return subsign.sign(`sl-pending|${action}|${subscriptionId}|${issuedAt}`);
+}
+
+// Checks { confirm: { action, subscriptionId } } against the signed pending action the browser
+// sent back with it. Returns { entry, action } or { error } (a reason for the model; nothing runs).
+function checkConfirm(confirm, pending, subs, lastUserText, now = Date.now()) {
+  const none = { error: 'There was no change waiting for confirmation, or it expired. Nothing was changed.' };
+  if (!confirm || typeof confirm !== 'object' || !pending || typeof pending !== 'object') return none;
+  const { action, subscriptionId } = confirm;
+  if (!SUB_ACTIONS.includes(action) || typeof subscriptionId !== 'string') return none;
+  if (pending.action !== action || pending.subscriptionId !== subscriptionId) return none;
+  const issuedAt = Number(pending.issuedAt);
+  if (!Number.isSafeInteger(issuedAt) || typeof pending.token !== 'string') return none;
+  if (now - issuedAt > PENDING_TTL_MS + PENDING_GRACE_MS || issuedAt - now > PENDING_GRACE_MS) {
+    return { error: `The ${action} request expired (confirm within ${PENDING_TTL_MS / 1000} seconds). Nothing was changed.` };
+  }
+  let expected;
+  try { expected = pendingToken(action, subscriptionId, issuedAt); } catch (e) { return none; }
+  const a = Buffer.from(expected), b = Buffer.from(pending.token);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return none;
+  // The confirm must come with the shopper's own "confirm" (typed, said or the button's text).
+  if (!CONFIRM_WORD_RE.test(String(lastUserText || ''))) return none;
+  const entry = subs.find(s => s.subscriptionId === subscriptionId);
+  if (!entry) return { error: "That subscription isn't linked to this browser. Nothing was changed." };
+  if (!spendToken(pending.token, now)) return { error: 'That confirmation was already used. Nothing else was changed.' };
+  return { entry, action };
+}
+
+// The status object from manageSubscription, worded for the model (no payer data exists in it).
+function statusView(st) {
+  const pack = Array.isArray(st.pack) ? st.pack.filter(l => FLAVOR_PRICES[l.id]) : [];
+  const notes = {
+    APPROVAL_PENDING: 'Created but not approved in PayPal yet. It will not bill unless the shopper approves it.',
+    APPROVED: 'Approved; PayPal is starting it.',
+    ACTIVE: 'Active and billing.',
+    SUSPENDED: 'Paused. No billing until resumed.',
+    CANCELLED: 'Cancelled. It will not bill again.',
+    EXPIRED: 'Ended.',
+  };
+  return {
+    subscriptionId: st.id,
+    status: st.status,
+    meaning: notes[st.status] || undefined,
+    cadence: st.cadence || undefined,
+    every: st.cadence ? everyText(st.cadence) : undefined,
+    amountPerDelivery: st.amount ? `$${st.amount}` : undefined,
+    nextBilling: st.nextBillingTime ? st.nextBillingTime.slice(0, 10) : 'none scheduled',
+    lastPayment: st.lastPayment ? `$${st.lastPayment.amount}${st.lastPayment.time ? ` on ${st.lastPayment.time.slice(0, 10)}` : ''}` : 'none yet',
+    pack: pack.length ? linesText(pack) : undefined,
+    priceCheck: st.priceOk ? undefined : 'The billed price does not match this pack at today\'s prices.',
+  };
+}
+
+// A manage failure worded for the model: our own friendly 403 / 409 messages pass through.
+function manageErrorText(e) {
+  if (e && (e.status === 409 || e.status === 403 || e.status === 400)) return e.message;
+  if (e && e.status === 504) return 'PayPal is slow to answer, so it is not clear yet whether that went through. Ask for the subscription status in a minute.';
+  if (e && e.status === 503) return 'Subscriptions are not switched on for this site right now.';
+  return 'PayPal could not be reached just now. Nothing was changed. Ask them to try again in a moment.';
+}
+
+const PENDING_SUMMARY = {
+  pause: (s) => `This pauses subscription ${s.subscriptionId}${s.cadence ? ` (${everyText(s.cadence)})` : ''}. PayPal stops billing and deliveries stop until you resume it.`,
+  resume: (s) => `This resumes subscription ${s.subscriptionId}. PayPal starts billing ${s.cadence ? everyText(s.cadence) : 'each cycle'} again.`,
+  cancel: (s) => `This cancels subscription ${s.subscriptionId} for good. No more charges or deliveries; restarting means approving a new subscription in PayPal.`,
+};
+
+// What a subscription tool that throws tells the model (the serial() wrapper's fallback).
+const SUB_TOOL_ERRORS = {
+  set_cadence: 'That did not work. Try again or pick another cadence.',
+  start_subscription: 'PayPal could not set up the subscription right now. Ask them to try again in a moment.',
+  subscription_status: 'Could not look that subscription up right now.',
+  pause_subscription: 'That did not work. Nothing was changed.',
+  resume_subscription: 'That did not work. Nothing was changed.',
+  cancel_subscription: 'That did not work. Nothing was changed.',
+};
+
+// What the model is told about subscriptions this turn. `state` holds no sigs.
+// The full rules ride along only when subscriptions are in play (or the shopper mentions one), so
+// plain flavor chats don't pay for them on every turn.
+const SUB_TALK_RE = /subscri|recurring|repeat|monthly|weekly|quarterly|cadence|every\s+(2|two|3|three|month|week)|pause|resume|cancel|confirm/i;
+function subscriptionPrompt({ subs, listed, cadence, pack, subscription, pendingAction, confirmed, lastUserText }) {
+  if (!subs.length && !cadence && !subscription && !pendingAction && !confirmed && !SUB_TALK_RE.test(String(lastUserText || ''))) {
+    return 'Subscriptions: if they want the pack on repeat (monthly and so on), call set_cadence. Never use start_checkout for a subscription.';
+  }
+  const lines = [
+    'Subscriptions (recurring delivery, billed by PayPal, pause or cancel anytime):',
+    `- If they want the pack on repeat ("make it monthly", "subscribe"), call set_cadence with biweekly, monthly or quarterly (ask which if they did not say). Never use start_checkout for a subscription.`,
+    '- Read back the items, the cadence and the per-delivery total set_cadence returned, and say "Tap the PayPal button to approve." Approval always happens in PayPal\'s window, never in chat, so their PayPal click is the confirmation.',
+    '- If their message already asks to start, subscribe or set it up ("make it monthly and start my subscription"), do not ask again: call set_cadence (and build_pack first if needed), then start_subscription, in this same turn, then give the read-back. Otherwise read back after set_cadence and call start_subscription when they say yes.',
+    '- "What\'s my subscription?": call subscription_status (it picks their approved one unless they name one) and give status, cadence, amount per delivery, next billing date and pack in one or two lines.',
+    '- Pause, resume or cancel: call pause_subscription, resume_subscription or cancel_subscription. These change nothing yet. Read back the summary the tool returned (what will change), then end with exactly: Say \'confirm\' to go ahead.',
+    '- Never say a subscription was paused, resumed, cancelled or changed unless "Confirmed change" below says it succeeded. If a tool or result returns an error, tell them that message plainly.',
+    '- Prices and savings in your earlier replies came from tools that ran then. Never retract or second-guess them.',
+    '- Changing the size, flavors or cadence of an existing subscription is not possible in place: it means cancelling it and starting a new subscription that they approve in PayPal again. Say so before offering it. If they want it: build_pack and set_cadence for the new pack, then cancel_subscription (they confirm), and only after a confirmed cancel call start_subscription.',
+    '',
+    subscriptionsText(subs, listed),
+    cadence && pack.length
+      ? `Chosen subscription cadence for the current pack (${linesText(pack)}): ${cadence} (${everyText(cadence)}).`
+      : cadence ? `Chosen subscription cadence: ${cadence}, but there is no pack yet.` : 'No subscription cadence chosen yet.',
+  ];
+  // Set when a model attempt already did this earlier in the turn and a fallback finishes it.
+  if (subscription) {
+    lines.push(`A PayPal subscription (${subscription.subscriptionId}, $${subscription.total} ${everyText(subscription.cadence)}) is already created for this pack. Do not start another unless the pack or cadence changes; tell them to tap the PayPal button to approve.`);
+  }
+  if (pendingAction) {
+    lines.push(`You already asked them to confirm: ${pendingAction.action} ${pendingAction.subscriptionId}. Read it back and say: Say 'confirm' to go ahead.`);
+  }
+  if (confirmed) {
+    lines.push(confirmed.ok
+      ? `Confirmed change: they confirmed "${confirmed.action}" for ${confirmed.subscriptionId} and PayPal did it. New state: ${JSON.stringify(confirmed.result)}. Tell them in one line.`
+      : confirmed.ran
+        ? `Confirmed change: they confirmed "${confirmed.action}" for ${confirmed.subscriptionId}, but it did not go through as asked. PayPal's answer: ${confirmed.error} Tell them that plainly; do not say it worked.`
+        : `They said confirm, but nothing ran: ${confirmed.error} Tell them and offer to ask again.`);
+  }
+  return lines.join('\n');
+}
+
+// One line for the shopper when a confirmed change ran but no model could word the reply.
+function confirmedReply(confirmed) {
+  if (!confirmed || !confirmed.ran) return null;
+  if (!confirmed.ok) return confirmed.error;
+  const st = confirmed.result && confirmed.result.status;
+  return `Done. Subscription ${confirmed.subscriptionId} is now ${String(st || 'updated').toLowerCase().replace(/_/g, ' ')}.`;
 }
 
 // Keeps only plain text turns from the browser, trimmed. Tool calls never come from the client.
@@ -437,6 +644,14 @@ async function runConcierge(req, body, opts = {}) {
   let packChanged = false;
   let packVersion = 0;
   let checkout = null;
+  // Subscription state for the DAR-701/702 tools. `linkedSubs` keeps the sigs (manageSubscription
+  // checks them again) and also holds subscriptions created this visit but not yet approved; it
+  // never goes into a prompt or tool result with its sigs.
+  const linkedSubs = cleanSubscriptions(body.subscriptions);
+  let cadence = CADENCE_IDS.includes(body.cadence) ? body.cadence : null;
+  let subscription = null;   // created this turn: { subscriptionId, sig, total, cadence, lines, env }
+  let pendingAction = null;  // proposed this turn: { action, subscriptionId, summary }
+  let confirmed = null;      // { action, subscriptionId, ran, ok, result?, error? }
 
   // The model can call several tools in one step and the SDK runs them concurrently. Queue them
   // so each one sees the pack the previous one left, in the order the model asked for them.
@@ -451,7 +666,7 @@ async function runConcierge(req, body, opts = {}) {
       console.error(`[concierge] ${name} failed:`, e && e.message, (e && e.paypal) || '');
       return { error: name === 'start_checkout'
         ? 'PayPal could not create the order right now. Ask them to try again in a moment.'
-        : 'That did not work. Try a different pack.' };
+        : SUB_TOOL_ERRORS[name] || 'That did not work. Try a different pack.' };
     });
     queue = run;
     return run;
@@ -461,6 +676,8 @@ async function runConcierge(req, body, opts = {}) {
     packVersion += 1;
     packChanged = true;
     checkout = null;
+    subscription = null;
+    cadence = null; // a cadence is set for one pack; a new pack needs set_cadence again
   };
 
   const lineSchema = z.object({
@@ -615,6 +832,161 @@ async function runConcierge(req, body, opts = {}) {
     },
   });
 
+  // Subscription tools. They act only on `linkedSubs` (sig verified) and never return a sig.
+  // With no id: their approved subscription first, else the newest one created this visit.
+  const findSub = id => (id ? linkedSubs.find(s => s.subscriptionId === String(id).trim().toUpperCase())
+    : linkedSubs.find(s => s.approved)
+      || linkedSubs.reduce((a, s) => (!a || String(s.at || '') > String(a.at || '') ? s : a), null));
+  const noSub = id => ({ error: id
+    ? `Subscription ${id} is not linked to this device, so it cannot be managed here.`
+    : 'There is no subscription on this device. Offer to start one for a pack.' });
+  const subIdParam = z.object({
+    subscriptionId: z.string().optional().describe('A subscription id from the list. Omit for the newest.'),
+  });
+  const proposeChange = action => serial(`${action}_subscription`, async ({ subscriptionId } = {}) => {
+    const entry = findSub(subscriptionId);
+    if (!entry) return noSub(subscriptionId);
+    const summary = PENDING_SUMMARY[action](entry);
+    pendingAction = { action, subscriptionId: entry.subscriptionId, summary };
+    return { pending: action, subscriptionId: entry.subscriptionId, summary,
+      next: 'Nothing has changed yet. Read the summary back, then say: Say \'confirm\' to go ahead.' };
+  });
+
+  Object.assign(tools, {
+    set_cadence: tool({
+      description: 'Make the current pack a subscription on a cadence (recurring delivery billed by PayPal). Returns the subscriber unit prices and the per-delivery total. Does not start anything.',
+      parameters: z.object({ cadence: z.enum(['biweekly', 'monthly', 'quarterly']) }),
+      execute: serial('set_cadence', async ({ cadence: next }) => {
+        if (!pack.length) return { error: 'There is no pack yet. Call build_pack first.' };
+        const priced = priceSubscription(pack, next);
+        if (cadence !== next) subscription = null;
+        cadence = next;
+        return {
+          cadence: next,
+          every: everyText(next),
+          savePercent: CADENCES[next].save,
+          unitPrices: pack.map(l => `${l.qty} x ${FLAVOR_PRICES[l.id].name} at $${centsToValue(unitCents(l.id, next))}`),
+          total: `$${priced.total} per delivery`,
+          oneTimeTotal: `$${priceCart(pack).total}`,
+        };
+      }),
+    }),
+    start_subscription: tool({
+      description: `Create the PayPal ${env === 'live' ? '' : 'sandbox '}subscription for the current pack on the chosen cadence. Call only after reading back items, cadence and per-delivery total and the shopper agrees. The shopper approves it with the PayPal button.`,
+      parameters: z.object({}),
+      execute: serial('start_subscription', async () => {
+        if (!pack.length) return { error: 'There is no pack yet. Call build_pack first.' };
+        if (!cadence) return { error: 'No cadence yet. Ask biweekly, monthly or quarterly, then call set_cadence.' };
+        const lines = pack.map(l => ({ ...l }));
+        const version = packVersion;
+        const chosen = cadence;
+        let started;
+        try {
+          // The conversation id keys PayPal-Request-Id, so a retry for the same pack and cadence
+          // (including the fallback model's) returns the subscription that already exists.
+          started = await startSubscription({ lines, cadence: chosen,
+            attemptId: typeof body.session === 'string' && ATTEMPT_ID_RE.test(body.session) ? body.session : undefined });
+        } catch (e) {
+          console.error('[concierge] start_subscription failed:', e && e.status, e && e.message, (e && e.paypal) || '');
+          return { error: e && e.status === 503 ? 'Subscriptions are not switched on for this site right now.' : SUB_TOOL_ERRORS.start_subscription };
+        }
+        if (version !== packVersion || chosen !== cadence) return { error: 'The pack or cadence changed. Call start_subscription again.' };
+        subscription = { subscriptionId: started.subscriptionId, sig: started.sig, total: started.total, cadence: chosen, lines, env };
+        if (!linkedSubs.some(s => s.subscriptionId === started.subscriptionId)) {
+          linkedSubs.push({ subscriptionId: started.subscriptionId, sig: started.sig, cadence: chosen, lines, at: new Date().toISOString(), approved: false });
+        }
+        return { subscriptionId: started.subscriptionId, total: `$${started.total}`, cadence: chosen, every: everyText(chosen),
+          next: 'Shopper must tap the PayPal button to approve.' };
+      }),
+    }),
+    subscription_status: tool({
+      description: 'Look up one of this device\'s subscriptions in PayPal: status, cadence, amount per delivery, next billing date and pack. Read-only.',
+      parameters: subIdParam,
+      execute: serial('subscription_status', async ({ subscriptionId } = {}) => {
+        const entry = findSub(subscriptionId);
+        if (!entry) return noSub(subscriptionId);
+        try {
+          return statusView(await manageSubscription({ subscriptionId: entry.subscriptionId, sig: entry.sig, action: 'status' }));
+        } catch (e) {
+          return { error: manageErrorText(e) };
+        }
+      }),
+    }),
+    pause_subscription: tool({
+      description: 'Ask to pause a subscription (billing stops until resumed). Changes nothing: returns a pending action the shopper must confirm.',
+      parameters: subIdParam,
+      execute: proposeChange('pause'),
+    }),
+    resume_subscription: tool({
+      description: 'Ask to resume a paused subscription. Changes nothing: returns a pending action the shopper must confirm.',
+      parameters: subIdParam,
+      execute: proposeChange('resume'),
+    }),
+    cancel_subscription: tool({
+      description: 'Ask to cancel a subscription for good. Changes nothing: returns a pending action the shopper must confirm. Also the first step of changing a subscription\'s size or cadence.',
+      parameters: subIdParam,
+      execute: proposeChange('cancel'),
+    }),
+  });
+
+  // The subscription part of the response. `subscription` carries the sig to the browser (it
+  // records it once PayPal approves); `pending` is signed so only this exact action can be
+  // confirmed, within PENDING_TTL_MS.
+  const subscriptionOut = () => {
+    let pending = null;
+    if (pendingAction) {
+      const issuedAt = Date.now();
+      try {
+        pending = { ...pendingAction, issuedAt, expiresInMs: PENDING_TTL_MS,
+          token: pendingToken(pendingAction.action, pendingAction.subscriptionId, issuedAt) };
+      } catch (e) { pending = null; }
+    }
+    return {
+      cadence,
+      subscription,
+      pending,
+      confirmed: confirmed ? { action: confirmed.action, subscriptionId: confirmed.subscriptionId, ran: confirmed.ran,
+        ok: confirmed.ok, status: (confirmed.result && confirmed.result.status) || null, error: confirmed.error || null } : null,
+    };
+  };
+  // Used only when the model ends a turn with no text.
+  const emptySubReply = () => {
+    if (pendingAction) return `${pendingAction.summary} Say 'confirm' to go ahead.`;
+    if (subscription) return 'Subscription ready. Tap the PayPal button to approve.';
+    return confirmedReply(confirmed);
+  };
+
+  // A confirmed pause / resume / cancel runs here, before any model, exactly once per request:
+  // only with the shopper's confirm, the signed pending action from the previous reply, and a
+  // subscription whose sig verifies (manageSubscription checks it again).
+  // The turn's time budget starts here, so a slow confirmed change counts against it too.
+  const deadline = Date.now() + (opts.budgetMs || TURN_BUDGET_MS);
+  if (body.confirm) {
+    const lastUser = messages[messages.length - 1].content;
+    const check = checkConfirm(body.confirm, body.pending, linkedSubs, lastUser);
+    if (check.error) {
+      confirmed = { action: body.confirm && SUB_ACTIONS.includes(body.confirm.action) ? body.confirm.action : null,
+        subscriptionId: null, ran: false, ok: false, error: check.error };
+    } else {
+      toolsUsed.push(`confirmed_${check.action}`);
+      let timer;
+      try {
+        const st = await Promise.race([
+          manageSubscription({ subscriptionId: check.entry.subscriptionId, sig: check.entry.sig, action: check.action }),
+          new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error('PayPal timed out'), { status: 504 })), opts.confirmBudgetMs || CONFIRM_BUDGET_MS); }),
+        ]);
+        confirmed = { action: check.action, subscriptionId: check.entry.subscriptionId, ran: true, ok: true, result: statusView(st) };
+      } catch (e) {
+        if (!(e && [400, 403, 409].includes(e.status))) {
+          console.error('[concierge] confirmed', check.action, 'failed:', e && e.status, e && e.message, (e && e.paypal) || '');
+        }
+        confirmed = { action: check.action, subscriptionId: check.entry.subscriptionId, ran: true, ok: false, error: manageErrorText(e) };
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  }
+
   // Tests inject models with opts.models ([{ name, model }]) or opts.model.
   const chain = opts.models || (opts.model ? [{ name: opts.modelName || 'gateway', model: opts.model }] : modelChain(req));
   if (!chain.length) {
@@ -623,8 +995,7 @@ async function runConcierge(req, body, opts = {}) {
     throw err;
   }
   // Keep the whole chain inside the function's 60 s limit (vercel.json), so a slow or hung
-  // provider ends in the friendly 503 instead of a platform timeout.
-  const deadline = Date.now() + (opts.budgetMs || TURN_BUDGET_MS);
+  // provider ends in the friendly 503 instead of a platform timeout (deadline is set above).
   const failures = [];
   for (let i = 0; i < chain.length; i++) {
     const { name, model } = chain[i];
@@ -633,11 +1004,13 @@ async function runConcierge(req, body, opts = {}) {
     const isClaude = provider.startsWith('anthropic') || /claude/i.test(String(model.modelId || ''));
     const left = deadline - Date.now();
     const budget = Math.max(1000, next ? Math.min(left * FIRST_TRY_SHARE, left - MIN_FALLBACK_MS) : left);
-    const timeout = AbortSignal.timeout(budget);
+    const timeout = AbortSignal.timeout(Math.floor(budget)); // AbortSignal.timeout needs an integer
     try {
       const result = await generateText({
         model,
-        system: systemPrompt(pack, history, fridgeNote, checkout, subs),
+        system: systemPrompt(pack, history, fridgeNote, checkout, subs) + '\n\n'
+          + subscriptionPrompt({ subs: linkedSubs, listed: new Set(subs.map(s => s.subscriptionId)), cadence, pack, subscription, pendingAction, confirmed,
+            lastUserText: messages[messages.length - 1].content }),
         messages,
         tools,
         maxSteps: 5,
@@ -654,11 +1027,12 @@ async function runConcierge(req, body, opts = {}) {
           : undefined,
       });
       return {
-        reply: (result.text || '').trim() || (checkout ? 'Order ready. Press the PayPal button below to approve.' : 'Done. Check your Fridge.'),
+        reply: (result.text || '').trim() || emptySubReply() || (checkout ? 'Order ready. Press the PayPal button below to approve.' : 'Done. Check your Fridge.'),
         pack: packChanged && pack.length ? packView(pack) : null,
         checkout,
         toolsUsed,
         model: name,
+        ...subscriptionOut(),
       };
     } catch (e) {
       // Let any tool still running finish before the next model sees the state.
@@ -667,6 +1041,12 @@ async function runConcierge(req, body, opts = {}) {
       const info = failureInfo(err);
       failures.push(`${name} ${info.status || '-'} ${info.type}`);
       console.error(`[concierge] ${name} failed: ${info.status || 'no status'} ${info.type}${next ? `; retrying once on ${next.name}` : ''}`);
+      // A confirmed change already ran at PayPal: report it instead of an error the shopper
+      // could take to mean nothing happened.
+      if (!next && confirmed && confirmed.ran) {
+        return { reply: confirmedReply(confirmed), pack: packChanged && pack.length ? packView(pack) : null,
+          checkout, toolsUsed, model: name, ...subscriptionOut() };
+      }
       if (!next) throw providerError(err, failures);
     }
   }
@@ -675,4 +1055,5 @@ async function runConcierge(req, body, opts = {}) {
 module.exports = {
   runConcierge, FLAVOR_NOTES, cleanMessages, cleanLines, cleanPack, cleanHistory, checkoutRequestId,
   modelChain, providerError, isProviderFailure, failureInfo,
+  cleanSubscriptions, checkConfirm, pendingToken, PENDING_TTL_MS,
 };

@@ -341,3 +341,59 @@ subscriber with name, email and address must not come back), `priceOk`, every ac
 state, the `422` → `409` mapping and the `502`s. Run it along with the pricing checks before
 merging. Pausing and resuming a real sandbox subscription needs the sandbox buyer to approve it
 first.
+
+## The concierge's subscription tools
+
+Both endpoints are thin wrappers over `startSubscription` and `manageSubscription` in
+`api/_lib/subscriptions.js`. The Flavor Concierge (`api/_lib/concierge.js`) calls those two
+functions directly, not over HTTP, so it gets the same pricing, signing and `409` messages.
+
+| Tool                  | What it does |
+| --------------------- | ------------ |
+| `set_cadence`         | Prices the current pack on `biweekly`, `monthly` or `quarterly` with `priceSubscription` and returns the unit prices and per-delivery total. Starts nothing. |
+| `start_subscription`  | Needs a pack and a cadence. Calls `startSubscription` with the conversation id as `attemptId`, so a retry (or the fallback model) gets the same subscription. Returns `{ subscriptionId, total, cadence, next }` to the model; the `sig` goes only to the browser, in the response's `subscription` field. |
+| `subscription_status` | Read-only, no confirm. `manageSubscription(…, 'status')`, worded for the model (status, cadence, amount, next billing date, pack). With no id it picks the approved subscription, else the newest one created this visit. |
+| `pause_subscription`, `resume_subscription`, `cancel_subscription` | Change nothing. Each returns a pending action with a one-line summary of the effect; the agent reads it back and ends with "Say 'confirm' to go ahead." |
+
+**Sigs never reach the model.** The panel sends its subscriptions with each chat request:
+`subscriptions: [{ subscriptionId, sig, cadence, lines, at, approved }]`, the approved ones from
+`localStorage['sl-orders']` plus any the agent created this visit that PayPal hasn't approved yet.
+`cleanSubscriptions` keeps only entries whose `sig` verifies, and the tools act only on those. The
+model sees ids, cadences, packs and states, never a sig, and nothing logs one.
+
+**Confirming a change.** The chat response carries the pending action as
+`pending: { action, subscriptionId, summary, issuedAt, expiresInMs: 30000, token }`, where
+`token` is an HMAC (the `SUB_SIGNING_SECRET` key) over the action, id and `issuedAt`. The panel
+shows **Confirm pause** (or resume / cancellation) and a dismiss button. The shopper confirms
+with the button, the voice loop's `window.dispatchEvent(new CustomEvent('sl-confirm'))`, or by
+typing or saying "confirm" as the very next message. The next request then carries
+`confirm: { action, subscriptionId }` and the `pending` object. Before any model runs, the
+server checks that:
+
+1. the confirm matches the pending action exactly, and its token verifies;
+2. it is at most 30 s old (plus 5 s for the network);
+3. the last user message is a confirm on its own ("confirm", "yes confirm", "Confirm pause"…;
+   "don't confirm" is not);
+4. the subscription is in this request's verified `subscriptions`;
+5. the token hasn't been used yet (checked per warm instance, so a resent request can't run the
+   change twice).
+
+Only then does it call `manageSubscription`, which checks the sig again. It gets at most 15 s,
+inside the turn's time budget; if PayPal hasn't answered by then, the agent says it can't tell yet
+whether the change went through. The result goes to the
+model as "Confirmed change" and to the browser as `confirmed: { action, subscriptionId, ran, ok,
+status, error }`. A refused action passes its friendly message through, for example the `409`
+for cancelling a subscription nobody approved yet. Any other message, the dismiss button or 30 s
+of silence discards the pending action, and a confirm with nothing pending changes nothing. If
+every model then fails, the reply is built from the confirmed result instead of a `503`.
+
+Changing the size or cadence of a subscription isn't possible in place. The agent says so, then
+cancels the old one (with confirm) and starts a new one, which the shopper approves in PayPal
+again.
+
+**In the panel** (`concierge.jsx`), a `subscription` in the response shows
+"Subscribe with PayPal · $X every <cadence>". The button runs `useShellPayPalSub`'s
+`start(existing)` with the subscription the server already created, so nothing new is created.
+On approve, the panel records the `sl-orders` entry (`slRecordSubscription`), takes the pack out
+of the Fridge, emits `subscribed`, and sends "I approved the subscription." so the agent
+confirms.
