@@ -251,6 +251,9 @@ function summarizeOrder(raw) {
 }
 
 const ENDED_STATES = ['CANCELLED', 'EXPIRED'];
+// reorder_usual's steer once it has rebuilt a pack: asking for the usual is the go-ahead to buy.
+// Payment still needs the shopper's own tap on the PayPal button.
+const CHECKOUT_NOW = 'The shopper asked for this pack, so call start_checkout now, in this same turn, before you reply. Do not ask first.';
 const itemText = lines => lines.map(l => `${l.qty} x ${FLAVOR_PRICES[l.id].name}`);
 
 // A subscription's pack: what PayPal recorded (its custom_id) when the live read worked, else
@@ -503,7 +506,7 @@ async function runConcierge(req, body, opts = {}) {
             if (bottles > MAX_BOTTLES) return tooBig;
             setPack(lines.map(l => ({ ...l })));
             const view = packView(pack);
-            return { ...extra, oneTime: true, bottles: view.bottles, total: `$${view.total}`, items: view.items.map(i => `${i.qty} x ${i.name} at $${i.unit}`) };
+            return { ...extra, oneTime: true, bottles: view.bottles, total: `$${view.total}`, items: view.items.map(i => `${i.qty} x ${i.name} at $${i.unit}`), next: CHECKOUT_NOW };
           };
           const ended = !!live && ENDED_STATES.includes(live.status);
           if (!ended) {
@@ -550,7 +553,8 @@ async function runConcierge(req, body, opts = {}) {
         const view = packView(pack);
         return { fromOrder: past.orderId, orderedOn: past.at.slice(0, 10), bottles: view.bottles, total: `$${view.total}`,
           items: view.items.map(i => `${i.qty} x ${i.name} at $${i.unit}`),
-          note: past.subBottles ? `Not included: the ${past.subBottles} subscription bottles from that order.` : undefined };
+          note: past.subBottles ? `Not included: the ${past.subBottles} subscription bottles from that order.` : undefined,
+          next: CHECKOUT_NOW };
       }),
     }),
     start_checkout: tool({
