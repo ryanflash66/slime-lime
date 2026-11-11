@@ -251,7 +251,8 @@ function voiceOnEnd() {
   voiceS.running = false;
   voiceS.live = false;
   // Anything already final still counts, unless the agent took the floor.
-  if (voiceS.buffer && !voiceS.speaking) voiceCommit();
+  // Not while the mic is held for the PayPal window: nothing said then may change the pack.
+  if (voiceS.buffer && !voiceS.speaking && !voiceHeld()) voiceCommit();
   voiceS.buffer = '';
   voiceS.interim = '';
   voiceClearTimer('commitTimer');
@@ -321,8 +322,14 @@ function voiceSendToAgent(text) {
   try { Promise.resolve(cc.send(text)).catch(() => {}); } catch (e) {}
 }
 
-function voiceFlushQueued() {
+function voiceFlushQueued(tries = 0) {
   if (!voiceS.queued || voiceS.thinking || voiceS.speaking || !voiceS.active) return;
+  // The 'thinking off' event can land before React removes the typing dots; retry briefly
+  // instead of re-queueing and waiting for a trigger that may never come.
+  if (voiceConciergeBusy()) {
+    if (tries < 20) setTimeout(() => voiceFlushQueued(tries + 1), 150);
+    return;
+  }
   const text = voiceS.queued;
   voiceS.queued = '';
   voiceSendToAgent(text);
