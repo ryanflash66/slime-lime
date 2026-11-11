@@ -263,7 +263,7 @@ function Concierge({ cart, fridgeOpen }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: history.slice(-20).map(m => ({ role: m.role, content: m.content })),
+          messages: history.slice(-20).map(m => ({ role: m.role, content: String(m.content || '').slice(0, 2000) })),
           pack: pack || cart.cart.filter(i => !i.subscription).map(i => ({ id: i.id, qty: i.qty })),
           history: ccOrdersOnly(ccReadOrders()).slice(0, CC_MAX_ORDERS).map(o => ({ orderId: o.orderId, at: o.at, lines: o.lines })),
           session: sessionRef.current,
