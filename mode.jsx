@@ -63,9 +63,12 @@ window.addEventListener('storage', e => {
   if (e.key !== MODE_KEY) return;
   const next = modeReadStored();
   if (!next || next === modeCurrent) return;
+  const prev = modeCurrent;
   modeCurrent = next;
   modeApplyDom(next);
   modeEmit(next, 'storage');
+  // Keep this tab consistent with slMode.set(): leaving Hands-free closes the concierge.
+  if (prev === 'handsfree' && next === 'legacy' && window.slConcierge) window.slConcierge.close();
 });
 
 const MODE_HAS_SPEECH = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
