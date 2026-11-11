@@ -8,7 +8,7 @@ Slime Lime is a fictional clean-formula gaming soda brand, and this repo is its 
 
 **Live site:** https://slime-lime-eta.vercel.app
 
-The repo started in April 2026 as a design portfolio piece, before the hackathon. Everything built during the hackathon is listed in [Built for the hackathon](#built-for-the-hackathon-since-oct-1-2026). PayPal Subscriptions, the Claude model for the concierge and the hands-free voice mode are still in progress; the last line of this README tracks them.
+The repo started in April 2026 as a design portfolio piece, before the hackathon. Everything built during the hackathon is listed in [Built for the hackathon](#built-for-the-hackathon-since-oct-1-2026). The concierge runs on Claude Haiku 5.5, with Gemini as an automatic fallback. PayPal Subscriptions and the hands-free voice mode are still in progress; the last line of this README tracks them.
 
 ## Try it
 
@@ -87,14 +87,16 @@ Set these in Vercel (Project, Settings, Environment Variables). Never put them i
 | `PAYPAL_CLIENT_ID` | PayPal sandbox app client ID. Also sent to the browser for the JS SDK. | Required |
 | `PAYPAL_CLIENT_SECRET` | PayPal sandbox app secret. Server only. | Required |
 | `PAYPAL_ENV` | `sandbox` or `live`. Unset means sandbox. | Optional |
-| `ANTHROPIC_API_KEY` | Primary concierge model, Claude Haiku 5.5. | Required for the concierge, unless the Gemini key is set |
+| `ANTHROPIC_API_KEY` | Primary concierge model, Claude Haiku 5.5 (`claude-haiku-5-5`). | Required for the concierge, unless the Gemini key is set |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | Gemini, used as the fallback when the Claude call fails, or as the main model when no Anthropic key is set. | Optional, recommended |
-| `CONCIERGE_MODEL` | Overrides the default concierge model id. | Optional |
+| `CONCIERGE_MODEL` | Overrides the Claude model id (default `claude-haiku-5-5`). Ignored for Claude unless it starts with `claude-`. | Optional |
 | `SUB_SIGNING_SECRET` | HMAC secret that signs subscription ids, so only the browser that started a subscription can check, pause, resume or cancel it. | Required for subscription management |
 
-`ANTHROPIC_API_KEY` and `SUB_SIGNING_SECRET` are read by code that is still in progress (the Claude model and subscription management). Until that lands, the concierge runs on Gemini.
+`SUB_SIGNING_SECRET` is read by subscription management, which is still in progress.
 
-The concierge also accepts `AI_GATEWAY_API_KEY` (Vercel AI Gateway) and `CONCIERGE_GOOGLE_MODEL` (Gemini model id, default `gemini-2.5-flash`). Both are optional.
+The concierge picks its model in this order: Claude Haiku 5.5 when `ANTHROPIC_API_KEY` is set, otherwise Gemini when `GOOGLE_GENERATIVE_AI_API_KEY` is set, otherwise the Vercel AI Gateway. When the Claude call fails (credit used up, bad key, rate limit, overload, server error, network or a 25-second timeout) and the Gemini key is set, the turn runs again once on Gemini. Gemini picks up from anything Claude's tools already did, such as a pack it built or a PayPal order it opened, so a retry never opens a second order for the same pack. If both fail at the provider, the panel shows a short message and the server returns 503. Each reply says which model answered (`model`: `anthropic`, `gemini` or `gateway`).
+
+The concierge also accepts `AI_GATEWAY_API_KEY` (Vercel AI Gateway) and `CONCIERGE_GOOGLE_MODEL` (Gemini model id, default `gemini-3.8-flash`). Both are optional. On the Gateway path, `CONCIERGE_MODEL` is used only when it is a Gateway id such as `google/gemini-3-flash`.
 
 ## Before merging
 

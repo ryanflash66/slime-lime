@@ -1,6 +1,7 @@
 // POST /api/concierge/chat
 // Body: { messages: [{ role, content }], pack?: [{ id, qty }], history?: [{ orderId, lines, at }], session? }
-// Returns { reply, pack, checkout, toolsUsed }. pack is set when the agent built a new pack;
+// Returns { reply, pack, checkout, toolsUsed, model }. model is 'anthropic', 'gemini' or 'gateway'.
+// pack is set when the agent built a new pack;
 // checkout ({ orderId, total, lines, env }) is set when it created the PayPal order.
 //
 // Cheap caps only: oversized bodies and runaway message lists are refused before any model call.

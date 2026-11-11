@@ -3,6 +3,7 @@
   "private": true,
   "description": "Slime Lime marketing site. Static React (no build) plus Vercel functions for PayPal sandbox checkout and the AI Flavor Concierge.",
   "dependencies": {
+    "@ai-sdk/anthropic": "1.2.12",
     "@ai-sdk/google": "1.2.22",
     "@ai-sdk/openai": "1.3.24",
     "@paypal/agent-toolkit": "1.11.0",
