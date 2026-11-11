@@ -93,6 +93,7 @@ function systemPrompt(currentPack, history, fridgeNote, openCheckout) {
     'Rules:',
     '- Never state a price, total or discount that a tool did not return. Never invent flavors.',
     '- If they want changes, call build_pack again with the full new pack.',
+    '- Earlier turns show only the text of your replies, not the tool calls behind them. Those tools did run, so trust your earlier replies and the pack and orders listed below. Never say you did not build a pack or start a checkout.',
     moneyRule(),
     '- No health or medical advice beyond the label facts above. Caffeine: suggest they check with a doctor if they are sensitive, under 18 or pregnant.',
     '- Keep every reply under 60 words, friendly, a little gamer-flavored, no markdown headings, no emoji.',
