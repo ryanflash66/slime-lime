@@ -354,6 +354,9 @@ function Concierge({ cart, fridgeOpen }) {
           {thinking && <div className="cc-msg is-assistant"><div className="cc-bubble cc-typing" aria-label="Concierge is thinking"><i/><i/><i/></div></div>}
         </div>
 
+        {/* Hands-free mic status + "Tap to talk" (voice.jsx); renders nothing in Legacy. */}
+        {window.VoiceBar && <window.VoiceBar/>}
+
         <form className="cc-form" onSubmit={onSubmit}>
           <input ref={inputRef} className="cc-input" value={input} onChange={e => setInput(e.target.value)}
             placeholder={last ? 'Try "get my usual"' : 'How do you play? What do you like?'} maxLength={500}
