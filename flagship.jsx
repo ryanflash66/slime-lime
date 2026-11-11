@@ -340,7 +340,7 @@ function FlagshipPage({ flavor, onAdd }) {
           >
             <div style={autoGrid(320, 16)}>
               {[
-                { name: 'Kovacs', stars: 5, body: "Switched from Red Bull, never going back. No 4pm wall." },
+                { name: 'Kovacs', stars: 5, body: "Switched from the usual energy drinks, never going back. No 4pm wall." },
                 { name: 'Mira L.', stars: 5, body: "Real flavor, not chemical. Plays well with my pre-game routine." },
                 { name: 'Jordan T.', stars: 4, body: "Wish it came in bigger bottles for long sessions, but the formula is clean." },
                 { name: 'Sam V.', stars: 5, body: "I'm a streamer. Six hours, no jitter. That's the whole sales pitch." },

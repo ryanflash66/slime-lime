@@ -83,7 +83,7 @@
   var ghostSubs = [];
 
   var TAGS = ['kovacs_77', 'mira.gg', 'voidstep', 'oxide__', 'frame_', 'lazerblue', 'pacing.exe', 'glitch.me',
-    'apex_apex', 'noir.dev', 'sl1me.queen', 'fps_doug', 'tiltproof', 'respawn.jpg', 'lowping', 'byte_mage',
+    'peak_peak', 'noir.dev', 'sl1me.queen', 'fps_doug', 'tiltproof', 'respawn.jpg', 'lowping', 'byte_mage',
     'neonwolf', 'afk.not', 'crit.chance', 'hydra8', 'nightowl.tv', 'zer0lag'];
   var COLORS = ['#CAE00F', '#FF3D5C', '#3D8BFF', '#FF9A1F', '#B96BFF', '#FF6B8A', '#2ED3B7'];
   var SAY = {

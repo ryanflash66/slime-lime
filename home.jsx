@@ -379,7 +379,7 @@ function LiveTicker() {
     { user: 'lazerblue', city: 'Berlin',     msg: 'completed 30-day streak',time: '38s ago' },
     { user: 'pacing.exe',city: 'Seoul',      msg: '12-pack Blue Raspberry', time: '46s ago' },
     { user: 'glitch.me', city: 'Lisbon',     msg: 'subscribed monthly',     time: '54s ago' },
-    { user: 'apex_apex', city: 'Reykjavík',  msg: '24-pack Lemon-Lime',     time: '1m ago' },
+    { user: 'peak_peak', city: 'Reykjavík',  msg: '24-pack Lemon-Lime',     time: '1m ago' },
     { user: 'noir.dev',  city: 'New York',   msg: 'unlocked Hydration Lvl 5', time: '1m ago' },
   ], []);
 
@@ -1003,9 +1003,9 @@ function ScrollStory() {
 // ─────────────────────────────────────────────────────────────
 function Streamers() {
   const quotes = [
-    { name: 'Mira "frame_" Lin',  handle: '@frame_',     reach: '380K followers', game: 'Apex Legends',     quote: "I used to chug Monster on stream and crash by hour 4. Slime Lime is the first drink that lets me actually finish a tournament without losing focus." },
-    { name: 'Voidstep',            handle: '@voidstep',   reach: '1.2M followers', game: 'Valorant',         quote: "Tastes like a real lemon-lime, not chemical sugar. The 75mg dose is the sweet spot — alert without the shakes." },
-    { name: 'Pacing.exe',          handle: '@pacing.exe', reach: '210K followers', game: 'League of Legends',quote: "I drink one before scrims and one mid-match. Six hours later I'm still locked in, no headache." },
+    { name: 'Mira "frame_" Lin',  handle: '@frame_',     reach: '380K followers', game: 'Battle Royale',    quote: "I used to chug big cans on stream and crash by hour 4. Slime Lime is the first drink that lets me actually finish a tournament without losing focus." },
+    { name: 'Voidstep',            handle: '@voidstep',   reach: '1.2M followers', game: 'Tactical Shooter', quote: "Tastes like a real lemon-lime, not chemical sugar. The 75mg dose is the sweet spot — alert without the shakes." },
+    { name: 'Pacing.exe',          handle: '@pacing.exe', reach: '210K followers', game: 'MOBA',             quote: "I drink one before scrims and one mid-match. Six hours later I'm still locked in, no headache." },
   ];
   return (
     <section className="section" style={{ background: 'var(--ink-900)', borderTop: '1px solid var(--border-1)', borderBottom: '1px solid var(--border-1)' }} data-level="Squad" data-screen-label="04 Streamers">
