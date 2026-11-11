@@ -210,6 +210,102 @@ The check compares against **today's** prices and plans:
 
 Plan these changes together with the subscriptions that are still billing.
 
-Status, manage and fulfillment code (DAR-695 and later) should check both: `sig` (this server
-created the subscription) and `verifyBilledAmount` (it bills what the pack costs). Do not fulfill
-a subscription that fails either one.
+Status, manage and fulfillment code should check both: `sig` (this server created the
+subscription) and `verifyBilledAmount` (it bills what the pack costs). Do not fulfill a
+subscription that fails either one. The manage endpoint below requires the `sig` and reports the
+price check as `priceOk`.
+
+## Managing a subscription
+
+`POST /api/paypal/subscription-manage` (`api/paypal/subscription-manage.js`) lets the shopper, or
+the concierge acting for them, check, pause, resume or cancel a subscription this server created.
+
+Request:
+
+```json
+{ "subscriptionId": "I-…", "sig": "…", "action": "status" }
+```
+
+`action` is one of `status`, `pause`, `resume` or `cancel`. `sig` is the one
+`POST /api/paypal/subscriptions` returned with the ID. Holding it is the only proof that the
+caller started this subscription, so the browser keeps the two together.
+
+Checks, in order. Nothing reaches PayPal until all of them pass:
+
+| Problem                                                    | Response |
+| ---------------------------------------------------------- | -------- |
+| Any method but `POST`                                      | `405`    |
+| Body is not a JSON object                                  | `400`    |
+| `subscriptionId` does not match `/^I-[A-Z0-9]{6,32}$/`     | `400`    |
+| Unknown `action`                                           | `400`    |
+| `SUB_SIGNING_SECRET` missing                               | `503`    |
+| `sig` missing, or `subsign.verify(subscriptionId, sig)` fails | `403 { "error": "This subscription isn't linked to this browser." }` |
+
+### Status object
+
+Every successful call answers `200` with the subscription as it is now:
+
+```json
+{
+  "id": "I-…",
+  "status": "ACTIVE",
+  "cadence": "monthly",
+  "nextBillingTime": "2026-12-11T10:00:00Z",
+  "lastPayment": { "amount": "21.96", "time": "2026-11-11T12:01:00Z" },
+  "amount": "21.96",
+  "pack": [{ "id": "lemon-lime", "qty": 6 }, { "id": "cherry", "qty": 4 }, { "id": "mango", "qty": 2 }],
+  "priceOk": true
+}
+```
+
+- It comes from `getSubscription(id)`, which uses `?fields=plan` so the inline price override is
+  included.
+- `status` is PayPal's: `APPROVAL_PENDING`, `APPROVED`, `ACTIVE`, `SUSPENDED`, `CANCELLED` or
+  `EXPIRED`.
+- `cadence` is the cadence whose `ensurePlans()` plan ID matches `plan_id`, or `null` for a plan
+  that isn't ours.
+- `amount` is what PayPal bills each cycle: the `REGULAR` cycle's `fixed_price.value`, in USD.
+  `lastPayment` is `null` until PayPal takes a payment. `nextBillingTime` is `null` when PayPal
+  has none, for example before approval.
+- `pack` is `decodePackCode(custom_id)`, or `null` when `custom_id` is not a pack code.
+- `priceOk` is `verifyBilledAmount(subscription).ok`, checked against today's prices (see
+  [Checking the billed amount](#checking-the-billed-amount-verifybilledamount)). A subscription
+  someone created at their own price straight through the SDK still gets its status, flagged
+  `priceOk: false`, and can still be paused, resumed or cancelled. Never fulfill one that fails.
+
+The response is built from this allow-list only. Nothing from PayPal's `subscriber` (name, email,
+shipping address, payer ID) or any other field is passed through.
+
+### Actions
+
+| `action` | PayPal call                                    | `reason` sent                         | Allowed from |
+| -------- | ---------------------------------------------- | ------------------------------------- | ------------ |
+| `pause`  | `POST /v1/billing/subscriptions/{id}/suspend`  | `Paused by shopper via Slime Lime`    | `ACTIVE` |
+| `resume` | `POST /v1/billing/subscriptions/{id}/activate` | `Resumed by shopper via Slime Lime`   | `SUSPENDED` |
+| `cancel` | `POST /v1/billing/subscriptions/{id}/cancel`   | `Cancelled by shopper via Slime Lime` | `APPROVAL_PENDING`, `APPROVED`, `ACTIVE`, `SUSPENDED` |
+
+PayPal answers these with `204` and no body. The endpoint then reads the subscription again and
+returns the fresh status object.
+
+The current state is checked before PayPal is called. A refused action is a `409`
+`{ "error": "…", "status": "<PayPal state>" }`:
+
+- anything on `CANCELLED` or `EXPIRED`: "This subscription has already ended."
+- `pause` when not `ACTIVE` (including `APPROVAL_PENDING`): "Only an active subscription can be paused."
+- `resume` when not `SUSPENDED`: "Only a paused subscription can be resumed."
+
+If the state changes between that read and PayPal's own check, PayPal answers
+`422 UNPROCESSABLE_ENTITY` with issue `SUBSCRIPTION_STATUS_INVALID`. The endpoint re-reads the
+subscription and returns the same friendly `409` for its new state.
+
+Any other PayPal or network failure, including a different 4xx, is a `502` with
+`paypal: { name, issue, debug_id }` when PayPal sent one, like the other subscription endpoints.
+
+### Checking it
+
+`node scripts/check-subscription-manage.mjs` runs the handler against an in-memory PayPal. It
+covers the 405, 400, 403 and 503 checks (with no PayPal call), the status allow-list (a
+subscriber with name, email and address must not come back), `priceOk`, every action in every
+state, the `422` → `409` mapping and the `502`s. Run it along with the pricing checks before
+merging. Pausing and resuming a real sandbox subscription needs the sandbox buyer to approve it
+first.
