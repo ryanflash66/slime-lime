@@ -127,8 +127,12 @@ constant time and returns `false` (never throws) on missing, malformed or wrong-
 
 Errors: `400` for a bad pack or cadence, `405` for any method but `POST`, and `503` when
 `SUB_SIGNING_SECRET` (or the PayPal keys) is missing. The signing secret is checked before any
-PayPal call, so no unsigned subscription is ever created. PayPal errors come back with
-`paypal: { name, issue, debug_id }` like the other endpoints.
+PayPal call, so no unsigned subscription is ever created. The pack is validated before PayPal is
+called, so any PayPal error (even a 4xx such as `403 NOT_AUTHORIZED`) comes back as `502` with
+`paypal: { name, issue, debug_id }`, like `GET /api/paypal/plans`.
+
+Each call creates a new subscription. One the buyer never approves stays `APPROVAL_PENDING` and
+is never billed, so a retry or double click costs nothing.
 
 ### Pack codes (`custom_id`)
 
@@ -147,10 +151,11 @@ that were priced.
 | `watermelon` | `wm` |
 
 Codes live in `FLAVOR_CODES` in `catalog.js`. Never reuse or reassign one: a live subscription
-keeps its `custom_id` for as long as it bills. A new flavor needs a new code (the module refuses to
-load without one). `decodePackCode(code)` turns a code back into `[{ id, qty }]`, or returns `null`
-if it is malformed. The longest accepted pack (20 lines of 96) is 99 characters, inside PayPal's
-127-character limit.
+keeps its `custom_id` for as long as it bills. When a flavor is retired, leave its code in
+`FLAVOR_CODES`. A new flavor needs a new code; the module refuses to load if a flavor has no code
+or two flavors share one. `decodePackCode(code)` turns a code back into `[{ id, qty }]`, or returns
+`null` if it is malformed. The longest accepted pack (20 lines of 96) is 99 characters, inside
+PayPal's 127-character limit; `priceSubscription` refuses any pack whose code would be longer.
 
 `node scripts/check-sub-pricing.mjs` checks, over thousands of random packs and every cadence,
 that `priceSubscription` equals `priceCart` for the same `--sub` lines, that pack codes round-trip,
@@ -183,6 +188,21 @@ It resolves `{ ok: true, cadence, lines, packCode, expected }` only when:
 
 Otherwise it resolves `{ ok: false, reason, expected?, actual? }`. It only rejects when
 `ensurePlans()` cannot reach PayPal, so a caller can tell "wrong price" from "could not check".
+Without `planIds`, a cold instance runs the full `ensurePlans()` lookup first; pass `planIds` when
+you already have them.
+
+The check compares against **today's** prices and plans:
+
+- If you change a flavor price or a cadence discount, existing subscriptions keep billing their
+  old inline price and fail the check until they are moved to the new price (PayPal's
+  `POST /v1/billing/subscriptions/{id}/revise` with a new `plan` override). That is on purpose: they
+  no longer bill what the pack costs.
+- If you retire a flavor, its pack codes still decode, but `priceSubscription` refuses them.
+- If you replace a plan (rename it or bump `PROVISION_VERSION` in `plans.js`), subscriptions on the
+  old plan are "not on a Slime Lime plan". While they run out, pass `planIds` with an array per
+  cadence that includes the old plan IDs (for example `{ monthly: [newId, oldId], … }`).
+
+Plan these changes together with the subscriptions that are still billing.
 
 Status, manage and fulfillment code (DAR-695 and later) should check both: `sig` (this server
 created the subscription) and `verifyBilledAmount` (it bills what the pack costs). Do not fulfill

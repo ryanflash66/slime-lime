@@ -19,11 +19,18 @@
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { FLAVOR_PRICES, CADENCES, priceCart, priceSubscription, decodePackCode } = require('../api/_lib/catalog.js');
+const catalog = require('../api/_lib/catalog.js');
+const { FLAVOR_PRICES, CADENCES, priceCart, priceSubscription, decodePackCode } = catalog;
 
+// PayPal's custom_id limit is fixed here on purpose, so a wrong value in catalog.js can't hide.
 const CUSTOM_ID_MAX = 127;
-const MAX_LINES = 20;
-const MAX_QTY = 96;
+// The pack limits come from catalog.js, so raising them there is checked against custom_id here.
+const MAX_LINES = catalog.MAX_LINES;
+const MAX_QTY = catalog.MAX_QTY_PER_LINE;
+if (!Number.isInteger(MAX_LINES) || !Number.isInteger(MAX_QTY)) {
+  console.error('check-sub-pricing: catalog.js must export MAX_LINES and MAX_QTY_PER_LINE.');
+  process.exit(1);
+}
 
 function parseArgs(argv) {
   const opts = { runs: 2000, seed: 691 };
@@ -157,6 +164,14 @@ expect400('unknown flavor', () => priceSubscription([{ id: 'cola', qty: 6 }], ca
 expect400('id already --sub', () => priceSubscription([{ id: `${flavorIds[0]}--sub`, qty: 6 }], cadenceIds[0]));
 expect400('line without id', () => priceSubscription([{ qty: 6 }], cadenceIds[0]));
 expect400('null line', () => priceSubscription([null], cadenceIds[0]));
+// Names inherited from Object.prototype are not flavors or cadences, in either pricer.
+for (const name of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+  expect400(`prototype cadence "${name}"`, () => priceSubscription([ok], name));
+  expect400(`prototype flavor "${name}"`, () => priceSubscription([{ id: name, qty: 6 }], cadenceIds[0]));
+  expect400(`priceCart prototype cadence "${name}"`, () => priceCart([{ id: `${flavorIds[0]}--sub`, qty: 6, subscription: name }]));
+  expect400(`priceCart prototype flavor "${name}"`, () => priceCart([{ id: name, qty: 6 }]));
+  expect400(`priceCart prototype sub flavor "${name}"`, () => priceCart([{ id: `${name}--sub`, qty: 6, subscription: cadenceIds[0] }]));
+}
 
 // Malformed pack codes decode to null and never throw.
 for (const bad of ['', 'lm', 'lm0', 'lm06', 'zz6', 'lm6.', '.lm6', 'lm6..ch4', 'LM6', 'lm6,ch4', 'lm-1', 'lm1000', 'x'.repeat(200), null, 42, {}]) {

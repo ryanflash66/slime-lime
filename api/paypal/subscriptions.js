@@ -9,6 +9,12 @@ const { ensurePlans } = require('../_lib/plans');
 const { createSubscription } = require('../_lib/subscriptions');
 const subsign = require('../_lib/subsign');
 
+function badGateway(message) {
+  const err = new Error(message);
+  err.status = 502;
+  return err;
+}
+
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -20,28 +26,23 @@ module.exports = async (req, res) => {
     const priced = priceSubscription(lines, cadence);
 
     // Without the secret we could not sign the new subscription, so stop before PayPal makes one.
-    if (!subsign.isConfigured()) {
-      const err = new Error('Subscriptions are not configured on the server.');
-      err.status = 503;
-      throw err;
-    }
+    subsign.assertConfigured();
 
-    let planIds;
+    let subscription;
     try {
-      planIds = await ensurePlans();
+      const planId = (await ensurePlans())[cadence];
+      if (!planId) throw badGateway(`No PayPal plan for cadence "${cadence}".`);
+      subscription = await createSubscription({ planId, total: priced.total, packCode: priced.packCode });
     } catch (err) {
-      // The browser can't cause a provisioning failure, so any PayPal error here is a bad gateway.
+      // The pack is already validated, so the browser can't cause a PayPal failure here:
+      // any PayPal error (including a 4xx) is a bad gateway.
       if (err.paypal) err.status = 502;
       throw err;
     }
-    const planId = planIds[cadence];
-    if (!planId) {
-      const err = new Error(`No PayPal plan for cadence "${cadence}".`);
-      err.status = 500;
-      throw err;
+    if (!subscription || typeof subscription.id !== 'string' || !subscription.id) {
+      throw badGateway('PayPal did not return a subscription ID.');
     }
 
-    const subscription = await createSubscription({ planId, total: priced.total, packCode: priced.packCode });
     res.status(201).json({
       subscriptionId: subscription.id,
       sig: subsign.sign(subscription.id),

@@ -52,7 +52,10 @@ function money(m) {
 // Checks that a subscription bills exactly what its pack costs.
 //
 // `subscription` is a GET /v1/billing/subscriptions/{id}?fields=plan response (getSubscription).
-// `planIds` is optional ({ cadence: planId }); by default it comes from ensurePlans().
+// `planIds` is optional ({ cadence: planId or [planId, ...] }); by default it comes from
+// ensurePlans(). Pass old plan IDs too after replacing a plan, while its subscriptions run out.
+// The expected price is today's priceSubscription total; see docs/subscriptions.md before
+// changing prices.
 //
 // Resolves { ok: true, cadence, lines, packCode, expected } when:
 //   - custom_id decodes to a pack and plan_id is one of our cadence plans;
@@ -70,7 +73,10 @@ async function verifyBilledAmount(subscription, planIds) {
   if (!lines) return fail('custom_id is not a pack code.');
 
   const ids = planIds || await ensurePlans();
-  const cadence = Object.keys(ids).find((c) => ids[c] === subscription.plan_id);
+  const planId = subscription.plan_id;
+  const cadence = typeof planId === 'string' && planId
+    ? Object.keys(ids).find((c) => [].concat(ids[c]).includes(planId))
+    : undefined;
   if (!cadence) return fail('Subscription is not on a Slime Lime plan.');
 
   let priced;

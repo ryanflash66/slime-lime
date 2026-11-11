@@ -10,8 +10,15 @@ function secret() {
   return typeof s === 'string' && s.length > 0 ? s : null;
 }
 
-function isConfigured() {
-  return secret() !== null;
+// Returns the secret, or throws a 503 error when SUB_SIGNING_SECRET is missing.
+function assertConfigured() {
+  const key = secret();
+  if (!key) {
+    const err = new Error('Subscriptions are not configured on the server.');
+    err.status = 503;
+    throw err;
+  }
+  return key;
 }
 
 function hmac(key, id) {
@@ -20,12 +27,7 @@ function hmac(key, id) {
 
 // Returns the signature for a subscription ID. Throws a 503 error when the secret is missing.
 function sign(id) {
-  const key = secret();
-  if (!key) {
-    const err = new Error('Subscriptions are not configured on the server.');
-    err.status = 503;
-    throw err;
-  }
+  const key = assertConfigured();
   if (typeof id !== 'string' || id.length === 0) throw new TypeError('sign() needs a subscription ID.');
   return hmac(key, id);
 }
@@ -45,4 +47,4 @@ function verify(id, sig) {
   }
 }
 
-module.exports = { sign, verify, isConfigured };
+module.exports = { sign, verify, assertConfigured };
