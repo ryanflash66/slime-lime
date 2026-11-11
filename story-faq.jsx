@@ -182,7 +182,7 @@ function FAQPage() {
         <div className="container-narrow">
           <div className="eyebrow" style={{ marginBottom: 16 }}>// SUPPORT · FAQ</div>
           <h1 className="display-lg" style={{ marginBottom: 16 }}>Questions, <span style={{ color: 'var(--accent)' }}>answered.</span></h1>
-          <p className="body-lg">If we missed something, ping us in the community chat — we read every message.</p>
+          <p className="body-lg">If we missed something, email <a href="mailto:support@slimelime.gg" style={{ color: 'var(--accent)' }}>support@slimelime.gg</a> — we read every message.</p>
         </div>
       </section>
       <section data-level="Intel" style={{ paddingBottom: 120 }}>
