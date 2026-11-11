@@ -8,20 +8,20 @@ Slime Lime is a fictional clean-formula gaming soda brand, and this repo is its 
 
 **Live site:** https://slime-lime-eta.vercel.app
 
-The repo started in April 2026 as a design portfolio piece, before the hackathon. Everything built during the hackathon is listed in [Built for the hackathon](#built-for-the-hackathon-since-oct-1-2026). The concierge runs on Claude Haiku 5.5, with Gemini as an automatic fallback. PayPal Subscriptions and the hands-free voice mode are still in progress; the last line of this README tracks them.
+The repo started in April 2026 as a design portfolio piece, before the hackathon. Everything built during the hackathon is listed in [Built for the hackathon](#built-for-the-hackathon-since-oct-1-2026). The concierge runs on Claude Haiku 5.5, with Gemini as an automatic fallback. PayPal Subscriptions and the hands-free voice mode are both live on the production site.
 
 ## Try it
 
-1. Open https://slime-lime-eta.vercel.app.
+1. Open https://slime-lime-eta.vercel.app. On your first visit a mode picker asks how you want to shop: pick **Legacy** (or **Skip**) to type, or **Hands-free** to talk (see below).
 2. Click **Flavor Concierge** (bottom right) and say how you play, for example: *"Late-night ranked, nothing too sweet, 12 bottles."*
 3. The agent builds a pack and drops it into the Fridge (the cart). Say *"yes, check out"*.
 4. Approve the payment with the PayPal button in the chat, using a PayPal sandbox buyer account. The agent then confirms the order with PayPal.
 5. Open the concierge again and say *"get my usual"* to reload your last order.
 6. Or say *"make it monthly and start my subscription"* and tap **Subscribe with PayPal**. Later, *"what's my subscription?"*, *"pause it"* and then *"confirm"*: the agent changes nothing until you confirm.
 
-You can also skip the agent: add bottles from the lineup, open the **Fridge**, and click **Pay with PayPal**.
+You can also skip the agent: add bottles from the lineup, open the **Fridge**, and click **Pay with PayPal**. For a subscription without the agent, build a pack on the **Subscribe** page, click **Add to Fridge**, then **Start subscription** in the Fridge.
 
-When the hands-free voice mode ships (in progress), a mode picker opens first. Pick **Hands-free** to talk to the concierge instead of typing. Voice needs Chrome.
+**Hands-free mode.** Pick **Hands-free** in the mode picker, or tap the mic button in the nav at any time, to switch. The concierge opens full screen, keeps listening (no wake word) and answers out loud. Say *"confirm"* to approve a pause, resume or cancel, and *"stop listening"* to turn the mic off. Payment is never approved by voice: you still tap the PayPal button. Voice needs Chrome; in other browsers you type in the same panel.
 
 The full walkthrough, with what to say at each step, is in [`docs/demo-script.md`](docs/demo-script.md).
 
@@ -31,9 +31,12 @@ The full walkthrough, with what to say at each step, is in [`docs/demo-script.md
 - **Backend:** Node serverless functions in `api/` on Vercel, for PayPal and the concierge.
 - **Prices are always computed on the server.** The browser and the AI model only send flavor ids and quantities. Every amount PayPal charges comes from `api/_lib/catalog.js`, so a tampered cart or a confused model can't change a price.
 - **The concierge never sees payer details.** It confirms payment with `get_order` from the PayPal Agent Toolkit, wrapped by `summarizeOrder` in `api/_lib/concierge.js`, which passes back only order status and amounts.
-- **"My usual" stays on the device.** The last 5 paid orders (order id, date, flavor ids and quantities, total) live in `localStorage['sl-orders']`. No accounts, no server database.
+- **"My usual" stays on the device.** The last 5 paid orders (order id, date, flavor ids and quantities, total) and the last 5 approved subscriptions (subscription id, its server signature, cadence, pack) live in `localStorage['sl-orders']`. No accounts, no server database.
 - **Public endpoints have abuse limits.** The concierge refuses oversized requests before any model call (32 KB body, 20 messages, 20 pack lines, 5 history entries) and caps each turn at 5 tool steps and 700 output tokens. A Vercel Firewall rule limits the concierge to 10 requests per minute per IP (live since Nov 11, 2026); the current plan allows only one rate-limit rule, so the PayPal endpoints rely on the code caps. [`docs/limits.md`](docs/limits.md) has the exact rules and their status. When the firewall answers 429, the chat shows "Easy there — the concierge needs a breather. Try again in a minute."
-- **Subscription plans are auto-provisioned** (in progress). The server finds or creates the PayPal catalog product and one billing plan per cadence, so nobody copies plan ids into env vars. See [`docs/subscriptions.md`](docs/subscriptions.md).
+- **Subscription plans are auto-provisioned.** The server finds or creates the PayPal catalog product and one billing plan per cadence (biweekly, monthly, quarterly), so nobody copies plan ids into env vars. See [`docs/subscriptions.md`](docs/subscriptions.md).
+- **Subscriptions are server-priced and signed.** The server sets each subscription's price itself and hands the browser an HMAC of the subscription id (`api/_lib/subsign.js`). Checking, pausing, resuming and cancelling only work with that signature, and the server re-prices the pack before trusting a subscription, so nobody can start one on the public plan id at a price we never set.
+- **Subscription changes need a confirm.** The agent's pause, resume and cancel tools change nothing on their own. They return a pending action, signed by the server, that runs only when the shopper taps **Confirm** or says *"confirm"* within 30 seconds.
+- **Hands-free runs in the browser.** `voice.jsx` uses Chrome's speech recognition and speech synthesis, and pauses the mic while the agent talks so it never hears itself. `handsfree-fx.jsx` draws the full-screen stage and the visuals for each agent step.
 
 Key files:
 
@@ -42,12 +45,18 @@ Slime Lime.html        entry: loads CDN scripts, mounts <App/>
 shell.jsx              FLAVORS data, nav, footer, cart state, PayPal button hook
 fridge.jsx             the Fridge (cart) with 3D close-up and PayPal checkout
 concierge.jsx          the Flavor Concierge chat panel
+mode.jsx               the Hands-free / Legacy mode picker
+voice.jsx              hands-free voice loop: listening, spoken replies, voice commands
+handsfree-fx.jsx       the full-screen hands-free stage and its visuals
 home.jsx, flagship.jsx, subscribe.jsx, story-faq.jsx   pages
 bottle3d.js, motion.js, game.js, presence.js           3D bottle, GSAP motion, scroll game, players-online mock
 api/_lib/catalog.js    server price list and validation (source of truth for prices)
 api/_lib/paypal.js     PayPal OAuth token and REST calls
 api/_lib/concierge.js  the agent: system prompt, tools, model selection
-api/paypal/            config, orders (create), capture
+api/_lib/plans.js      auto-provisions the PayPal subscription product and plans
+api/_lib/subscriptions.js  creates, reads and manages PayPal subscriptions
+api/_lib/subsign.js    HMAC signature for subscription ids
+api/paypal/            config, orders (create), capture, plans, subscriptions, subscription-manage
 api/concierge/chat.js  POST endpoint for the concierge
 ```
 
@@ -57,8 +66,12 @@ api/concierge/chat.js  POST endpoint for the concierge
 |---|---|
 | `build_pack` | Takes flavor ids and quantities, prices them on the server, and fills the Fridge. |
 | `start_checkout` | Creates a PayPal Orders v2 order for that pack, server-priced. |
-| `reorder_usual` | Reloads a past order from this device's history at today's prices. |
-| `get_order` | From the PayPal Agent Toolkit. Confirms payment status. |
+| `reorder_usual` | Reloads a past order from this device's history at today's prices. With an active subscription, it offers an extra one-time pack instead of starting a second subscription. |
+| `get_order` | From the PayPal Agent Toolkit. Confirms payment status and answers "where's my order". |
+| `set_cadence` | Makes the current pack a subscription (biweekly, monthly or quarterly) and returns the per-delivery total. Starts nothing. |
+| `start_subscription` | Creates the PayPal subscription for that pack, server-priced. The shopper approves it with the PayPal button. |
+| `subscription_status` | Reads a subscription: status, cadence, amount and next billing date. |
+| `pause_subscription`, `resume_subscription`, `cancel_subscription` | Propose a change. Nothing happens until the shopper confirms. |
 
 ## Run locally
 
@@ -94,8 +107,6 @@ Set these in Vercel (Project, Settings, Environment Variables). Never put them i
 | `CONCIERGE_MODEL` | Overrides the Claude model id (default `claude-haiku-5-5`). Ignored for Claude unless it starts with `claude-`. | Optional |
 | `SUB_SIGNING_SECRET` | HMAC secret that signs subscription ids, so only the browser that started a subscription can check, pause, resume or cancel it. | Required for subscription management |
 
-`SUB_SIGNING_SECRET` is read by subscription management, which is still in progress.
-
 The concierge picks its model in this order: Claude Haiku 5.5 when `ANTHROPIC_API_KEY` is set, otherwise Gemini when `GOOGLE_GENERATIVE_AI_API_KEY` is set, otherwise the Vercel AI Gateway. When the Claude call fails (credit used up, bad key, rate limit, overload, server error, network or a 25-second timeout) and the Gemini key is set, the turn runs again once on Gemini. Gemini picks up from anything Claude's tools already did, such as a pack it built or a PayPal order it opened, so a retry never opens a second order for the same pack. If both fail at the provider, the panel shows a short message and the server returns 503. Each reply says which model answered (`model`: `anthropic`, `gemini` or `gateway`).
 
 The concierge also accepts `AI_GATEWAY_API_KEY` (Vercel AI Gateway) and `CONCIERGE_GOOGLE_MODEL` (Gemini model id, default `gemini-3.8-flash`). Both are optional. On the Gateway path, `CONCIERGE_MODEL` is used only when it is a Gateway id such as `google/gemini-3-flash`.
@@ -108,7 +119,7 @@ Run the price-drift check:
 node scripts/check-prices.mjs
 ```
 
-Prices live in three places: `api/_lib/catalog.js` (server), `FLAVORS` in `shell.jsx`, and `SUB_CADENCES` in `subscribe.jsx`. The script exits 1 with a diff when they disagree. It arrives with ticket DAR-687.
+Prices live in three places: `api/_lib/catalog.js` (server), `FLAVORS` in `shell.jsx`, and `SUB_CADENCES` in `subscribe.jsx`. The script exits 1 with a diff when they disagree.
 
 ## Deploy
 
@@ -145,5 +156,25 @@ Ready to paste into Devpost. Every pull request merged on or after 2026-10-01, f
 | [#21](https://github.com/ryanflash66/slime-lime/pull/21) | Add PR-Agent review and security check | 2026-11-11 | Automatic AI code review with a security section on every pull request. |
 | [#18](https://github.com/ryanflash66/slime-lime/pull/18) | PayPal sandbox checkout in the cart | 2026-11-11 | Real PayPal sandbox checkout from the Fridge: server-priced Orders v2 order, JS SDK v6 popup, and capture. |
 | [#24](https://github.com/ryanflash66/slime-lime/pull/24) | Demo video script: under-3-minute shot list (DAR-690) | 2026-11-11 | Adds `docs/demo-script.md`, the shot-by-shot script for the demo video. |
-
-In progress during the hackathon: concierge ([#23](https://github.com/ryanflash66/slime-lime/pull/23)), PayPal Subscriptions, hands-free voice mode.
+| [#26](https://github.com/ryanflash66/slime-lime/pull/26) | README: run steps, env vars, MIT, and Built for the hackathon section | 2026-11-11 | This README: how to run it, environment variables, license and this list. |
+| [#27](https://github.com/ryanflash66/slime-lime/pull/27) | Auto-provision PayPal subscription product and cadence plans (DAR-688) | 2026-11-11 | The server finds or creates the PayPal product and one billing plan per cadence, with no plan ids in env vars. |
+| [#25](https://github.com/ryanflash66/slime-lime/pull/25) | Replace Twitch/Discord marks with plain icons (no third-party trademarks) | 2026-11-11 | Plain chat and play icons replace third-party logos in the footer and streamer cards. |
+| [#28](https://github.com/ryanflash66/slime-lime/pull/28) | Price-drift check script + round subscribe totals like the server (DAR-687) | 2026-11-11 | `scripts/check-prices.mjs` catches price drift between client and server; the Subscribe page now rounds like the server. |
+| [#22](https://github.com/ryanflash66/slime-lime/pull/22) | Apply Sourcery review fixes from PR #14 | 2026-11-11 | Code review fixes for the 3D bottle and home page, carried over from the closed #14. |
+| [#31](https://github.com/ryanflash66/slime-lime/pull/31) | POST /api/paypal/subscriptions: server-priced PayPal subscription with signed ID (DAR-691) | 2026-11-11 | Creates a server-priced PayPal subscription and returns its id with an HMAC signature. |
+| [#29](https://github.com/ryanflash66/slime-lime/pull/29) | Flavor Concierge: AI agent that builds your pack and starts PayPal checkout (rebased on main) | 2026-11-11 | The Flavor Concierge: builds a pack, fills the Fridge, opens PayPal checkout and reloads "my usual". Replaces the closed #23. |
+| [#32](https://github.com/ryanflash66/slime-lime/pull/32) | POST /api/paypal/subscription-manage: signed status / pause / resume / cancel (DAR-695) | 2026-11-11 | Status, pause, resume and cancel for a subscription, only with its signature. |
+| [#33](https://github.com/ryanflash66/slime-lime/pull/33) | Mode picker overlay + nav toggle: Hands-free vs Legacy (DAR-694) | 2026-11-11 | First-visit picker for Hands-free or Legacy, plus a mic button in the nav to switch. |
+| [#34](https://github.com/ryanflash66/slime-lime/pull/34) | Fridge: Start subscription (PayPal recurring) separate from one-time checkout (DAR-696) | 2026-11-11 | The Fridge checks out a subscription pack with PayPal Subscriptions, apart from one-time bottles. |
+| [#35](https://github.com/ryanflash66/slime-lime/pull/35) | Concierge on Claude Haiku 5.5 with automatic Gemini fallback (DAR-692) | 2026-11-11 | The concierge runs on Claude Haiku 5.5 and retries once on Gemini if Claude fails. |
+| [#36](https://github.com/ryanflash66/slime-lime/pull/36) | Concierge abuse limits: request caps, 700-token turns, 429 breather message (DAR-693) | 2026-11-11 | Request size caps, 700-token turns and a friendly message when the rate limit hits. |
+| [#39](https://github.com/ryanflash66/slime-lime/pull/39) | docs: concierge rate limit is live (no IP-wide hold); PayPal rule blocked by plan | 2026-11-11 | Documents the live concierge rate limit in `docs/limits.md`. |
+| [#37](https://github.com/ryanflash66/slime-lime/pull/37) | Hands-free voice loop: always-listening mic, spoken replies, voice commands, typed fallback (DAR-697) | 2026-11-11 | Hands-free voice: an always-listening mic, spoken replies, "confirm" and "stop listening", and typing as a fallback. |
+| [#38](https://github.com/ryanflash66/slime-lime/pull/38) | Hands-free stage: full-screen look + agent visuals (DAR-698) | 2026-11-11 | A full-screen hands-free stage with visuals for picking flavors, filling the Fridge and checking out. |
+| [#40](https://github.com/ryanflash66/slime-lime/pull/40) | Concierge: subscription-aware "get my usual" and "where's my order" (DAR-700) | 2026-11-11 | "Get my usual" and "where's my order" know about an active subscription. |
+| [#41](https://github.com/ryanflash66/slime-lime/pull/41) | Concierge: start, check, pause, resume and cancel a PayPal subscription, with confirm (DAR-701, DAR-702) | 2026-11-11 | The concierge starts and manages PayPal subscriptions; every change waits for "confirm". |
+| [#42](https://github.com/ryanflash66/slime-lime/pull/42) | docs: concierge rate limit lowered to 10 per minute per IP | 2026-11-11 | Updates the documented rate limit to 10 requests per minute per IP. |
+| [#43](https://github.com/ryanflash66/slime-lime/pull/43) | Concierge: PayPal button line only when a button is on screen, plus copy fixes (DAR-708, 709, 713, 714) | 2026-11-11 | The agent mentions the PayPal button only when one is on screen, plus clearer wording. |
+| [#44](https://github.com/ryanflash66/slime-lime/pull/44) | Hands-free stage: empty first-visit Fridge, subscription amount, readable agent line (DAR-710, DAR-711, DAR-712) | 2026-11-11 | First visits start with an empty Fridge; the stage shows the subscription amount and always fits the agent's line. |
+| [#30](https://github.com/ryanflash66/slime-lime/pull/30) | Remove third-party brand and game names from demo copy (DAR-707) | 2026-11-11 | Site copy no longer names other drinks or games. |
+| [#45](https://github.com/ryanflash66/slime-lime/pull/45) | Subscribe page: Add to Fridge, kept in sync with the Fridge; subscription pack shown first | 2026-11-11 | The Subscribe page adds its pack to the Fridge and stays in sync with it; the subscription pack is listed first. |
