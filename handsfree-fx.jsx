@@ -488,12 +488,15 @@ function HFStage({ cart }) {
   }, []);
 
   // Unmount: stop every pending beat and remove any bottle still in flight.
-  hfUseEffect(() => () => {
-    aliveRef.current = false;
-    timersRef.current.forEach(clearTimeout);
-    timersRef.current.clear();
-    flyersRef.current.forEach(n => n.remove());
-    flyersRef.current.clear();
+  hfUseEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      timersRef.current.forEach(clearTimeout);
+      timersRef.current.clear();
+      flyersRef.current.forEach(n => n.remove());
+      flyersRef.current.clear();
+    };
   }, []);
 
   // Cart count: follows the cart, except while a pack is flying in (then it ticks on landing).
