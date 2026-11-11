@@ -78,7 +78,12 @@ function conflict(message, state) {
 // (unknown when the re-read failed).
 function paypalRefusal(action, state) {
   if (action === 'cancel' && state === 'APPROVAL_PENDING') return NOT_APPROVED;
-  return refusal(action, state) || ACTIONS[action].refusal;
+  const ours = refusal(action, state);
+  if (ours) return ours;
+  // Our own check allows the action in this state, so PayPal refused for another reason
+  // (e.g. the state changed between our read and its update). Don't blame the state.
+  if (state) return `PayPal didn't accept that change just now (the subscription is ${state.toLowerCase().replace(/_/g, ' ')}). Try again in a moment.`;
+  return ACTIONS[action].refusal;
 }
 
 // PayPal money -> "21.60". PayPal trims trailing zeros ("21.6"); show cents like the

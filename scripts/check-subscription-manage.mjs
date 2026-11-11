@@ -181,6 +181,7 @@ const MSG = {
   pause: 'Only an active subscription can be paused.',
   resume: 'Only a paused subscription can be resumed.',
 };
+const RETRY = state => `PayPal didn't accept that change just now (the subscription is ${state.toLowerCase().replace(/_/g, ' ')}). Try again in a moment.`;
 
 // 405
 for (const method of ['GET', 'PUT', 'DELETE']) {
@@ -380,8 +381,10 @@ for (const [action, before, after, want] of [
   ['resume', 'SUSPENDED', 'ACTIVE', MSG.resume],
   ['cancel', 'ACTIVE', 'CANCELLED', ENDED],
   ['cancel', 'ACTIVE', 'EXPIRED', ENDED],
-  ['pause', 'ACTIVE', null, MSG.pause],     // re-read fails: fall back to the action's message
-  ['pause', 'ACTIVE', 'ACTIVE', MSG.pause], // PayPal stricter than us: still a 409
+  // PayPal refused although our own check allows the action in the known state: still a 409, but
+  // the message doesn't blame the state (re-read failing keeps the state we read before the call).
+  ['pause', 'ACTIVE', null, RETRY('ACTIVE')],
+  ['pause', 'ACTIVE', 'ACTIVE', RETRY('ACTIVE')],
 ]) {
   reset(subscription(before));
   fake.onAction = () => invalid();
