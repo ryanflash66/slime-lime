@@ -42,7 +42,7 @@ rest of the site is untouched.
 
 | Rule | Matches | Limit |
 |---|---|---|
-| `concierge-rate-limit` | path starts with `/api/concierge/chat` AND method equals `POST` | 20 per 60 s per IP, then 429 until the window resets (live) |
+| `concierge-rate-limit` | path starts with `/api/concierge/chat` AND method equals `POST` | 10 per 60 s per IP, then 429 until the window resets (live) |
 | `paypal-rate-limit` | path matches `^/api/paypal/(orders\|subscriptions\|subscription-manage)` (any method) | 10 per 60 s per IP (not available on the current plan) |
 
 Paths match by prefix rather than exact equality, so `/api/concierge/chat/` or
@@ -51,7 +51,7 @@ Paths match by prefix rather than exact equality, so `/api/concierge/chat/` or
 Two trade-offs to know about:
 
 - The count is per public IP. People sharing one network (a venue or office Wi-Fi) share one
-  budget of 20 concierge messages a minute. For a demo, that is plenty.
+  budget of 10 concierge messages a minute. For a demo, that is plenty.
 - `/api/paypal/capture` and `/api/paypal/plans` are not covered. Capture only finishes an order
   the shopper already approved, and the site never calls plans from the browser. Add them to the
   regex if they ever see abuse.
@@ -61,6 +61,10 @@ Two trade-offs to know about:
 - `concierge-rate-limit` (id `rule_concierge_rate_limit_pxg4bc`) was created with
   `vercel firewall rules add` and published. Check on production: 23 quick POSTs of `{}`
   returned 400 nineteen times, then 429, and the rest of the site still answered 200.
+- **Lowered to 10 per minute** later on Nov 11. A per-IP limit doesn't cap total spend: at 20 a
+  minute, one script could send about 1,200 requests an hour and drain the monthly Anthropic
+  credit. Re-checked: 11 quick POSTs of `{}` gave 400 ten times, then 429, and the site stayed 200.
+  The real cap on total spend is a monthly limit in the Anthropic Console (set by Ryan).
 - **No action duration ("hold").** The first version used `actionDuration: "1m"`. After the
   first 429, Vercel answered 403 to *every* request from that IP, the storefront included, for
   about 70 s. A shopper on shared Wi-Fi could lose the whole site that way, so the rule was
@@ -84,7 +88,7 @@ The request body:
   "rules": [
     {
       "name": "concierge-rate-limit",
-      "description": "DAR-693: 20 POSTs per 60 s per IP on the AI concierge; over the limit gets 429 for 60 s.",
+      "description": "DAR-693: 10 POSTs per 60 s per IP on the AI concierge; requests over the limit get 429 until the window resets. No IP-wide hold.",
       "active": true,
       "conditionGroup": [{ "conditions": [
         { "type": "path", "op": "pre", "value": "/api/concierge/chat" },
@@ -92,7 +96,7 @@ The request body:
       ] }],
       "action": { "mitigate": {
         "action": "rate_limit",
-        "rateLimit": { "algo": "fixed_window", "window": 60, "limit": 20, "keys": ["ip"], "action": "rate_limit" }
+        "rateLimit": { "algo": "fixed_window", "window": 60, "limit": 10, "keys": ["ip"], "action": "rate_limit" }
       } }
     },
     {
@@ -121,8 +125,8 @@ Each check blocks your own IP for up to a minute, so wait between them.
 
 ```bash
 # Concierge: an empty body is refused with 400 before any model call.
-# Expect 400 for the first 20, then 429.
-for i in $(seq 1 22); do
+# Expect 400 for the first 10, then 429.
+for i in $(seq 1 12); do
   curl -s -o /dev/null -w "%{http_code} " -X POST -H 'Content-Type: application/json' \
     -d '{}' https://slime-lime-eta.vercel.app/api/concierge/chat
 done; echo
