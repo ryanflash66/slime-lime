@@ -61,6 +61,25 @@ function FridgeShelves({ flavors, qtyOf, subs, onOpen, slotImgs, onInc, onDec, o
   const stockedAny = flavors.some(f => qtyOf(f.id) > 0) || subs.length > 0;
   return (
     <div className="fr-shelves">
+      {/* The subscription pack goes first: it's what the Subscribe page just added. */}
+      {subs.length > 0 && (
+        <section className="fr-crisper is-top" aria-label="Subscription pack">
+          <div className="fr-crisper-h"><span>CRISPER · SUB PACK</span><span>{subs[0].sub}</span></div>
+          <ul>
+            {subs.map(i => (
+              <li key={i.id}>
+                <img src={fridgeImg(i.id.replace(/--sub$/, ''))} alt="" width="30" height="40"/>
+                <span className="fr-crisper-name">{i.short || i.name}</span>
+                <span className="fr-step fr-step-sm">
+                  <button type="button" onClick={() => onDec(i.id)} aria-label={`Remove one ${i.name} from the subscription`}><Icon name="minus" size={11}/></button>
+                  <b>{i.qty}</b>
+                  <button type="button" onClick={() => onInc(i.id)} aria-label={`Add one ${i.name} to the subscription`}><Icon name="plus" size={11}/></button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {rows.map((row, r) => (
         <section key={r} className="fr-row" aria-label={r === 0 ? 'Top shelf' : 'Middle shelf'}>
           <div className="fr-row-bottles">
@@ -84,24 +103,6 @@ function FridgeShelves({ flavors, qtyOf, subs, onOpen, slotImgs, onInc, onDec, o
         </section>
       ))}
 
-      {subs.length > 0 && (
-        <section className="fr-crisper" aria-label="Subscription pack">
-          <div className="fr-crisper-h"><span>CRISPER · SUB PACK</span><span>{subs[0].sub}</span></div>
-          <ul>
-            {subs.map(i => (
-              <li key={i.id}>
-                <img src={fridgeImg(i.id.replace(/--sub$/, ''))} alt="" width="30" height="40"/>
-                <span className="fr-crisper-name">{i.short || i.name}</span>
-                <span className="fr-step fr-step-sm">
-                  <button type="button" onClick={() => onDec(i.id)} aria-label={`Remove one ${i.name} from the subscription`}><Icon name="minus" size={11}/></button>
-                  <b>{i.qty}</b>
-                  <button type="button" onClick={() => onInc(i.id)} aria-label={`Add one ${i.name} to the subscription`}><Icon name="plus" size={11}/></button>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
 
       {!stockedAny ? (
         <div className="fr-empty">
@@ -457,7 +458,7 @@ function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, onPaid }) 
                 : pay.status === 'paying' ? 'Waiting for PayPal…'
                 : pay.status === 'capturing' ? 'Confirming payment…'
                 : pay.status === 'unavailable' || pay.status === 'failed' ? 'Checkout offline'
-                : <>Pay with PayPal · {fridgeMoney(oneTotal)}</>}
+                : <>Pay with PayPal · {fridgeMoney(oneTotal)}{showSub ? ' once' : ''}</>}
             </button>
           )}
           {(showPay || pay.status === 'paid') && (

@@ -73,7 +73,8 @@ function App() {
 
   let page;
   if (route.startsWith('/flagship')) page = <window.FlagshipPage flavor={flavor} onAdd={cart.add}/>;
-  else if (route.startsWith('/subscribe')) page = <window.SubscribePage onAdd={cart.add} onSubscribe={cart.replaceSubscription}/>;
+  else if (route.startsWith('/subscribe')) page = <window.SubscribePage onAdd={cart.add} onSubscribe={cart.replaceSubscription}
+    onSync={cart.syncSubscription} fridgeSubs={cart.cart.filter(i => i.subscription)}/>;
   else if (route.startsWith('/story')) page = <window.StoryPage/>;
   else if (route.startsWith('/faq')) page = <window.FAQPage/>;
   else page = <window.HomePage flavor={flavor} onPickFlavor={setFlavor} onAdd={cart.add}/>;

@@ -185,10 +185,23 @@ function subscribeLoad() {
   return null;
 }
 
-function SubscribePage({ onAdd, onSubscribe }) {
+function SubscribePage({ onAdd, onSubscribe, onSync, fridgeSubs = [] }) {
   const flavors = window.FLAVORS;
   const byId = id => flavors.find(f => f.id === id);
   const saved = useMemoS(subscribeLoad, []);
+  const fridgeSubBottles = fridgeSubs.reduce((s, i) => s + i.qty, 0);
+  // Linked: this builder's pack is in the Fridge, so edits here update the Fridge (and emptying a
+  // slot takes the pack out until the fridge is full again). Restored on a return visit only when
+  // the Fridge still holds exactly this pack, so a pack the concierge built is never overwritten.
+  const [linked, setLinked] = useStateS(() => {
+    if (!saved || !saved.linked || !fridgeSubBottles) return false;
+    const want = {};
+    saved.slots.slice(0, saved.packSize).forEach(id => { if (id) want[`${id}--sub`] = (want[`${id}--sub`] || 0) + 1; });
+    const n = Object.values(want).reduce((s, q) => s + q, 0);
+    return n === saved.packSize && fridgeSubs.length === Object.keys(want).length
+      && fridgeSubs.every(i => want[i.id] === i.qty && i.subscription === saved.cadence);
+  });
+  const pushed = useRefS(null); // what the last sync sent the Fridge: 'full' | 'empty'
   const [slots, setSlots] = useStateS(() => saved ? saved.slots : Array(SUB_MAX).fill(null));
   const [packSize, setPackSize] = useStateS(() => saved ? saved.packSize : 12);
   const [cadence, setCadence] = useStateS(() => saved ? saved.cadence : 'monthly');
@@ -217,7 +230,7 @@ function SubscribePage({ onAdd, onSubscribe }) {
   const doorRef = useRefS(doorOpen); doorRef.current = doorOpen;
   const reelRef = useRefS(reel); reelRef.current = reel;
 
-  useEffectS(() => { try { localStorage.setItem(SUB_KEY, JSON.stringify({ slots, packSize, cadence })); } catch (e) { /* ignore */ } }, [slots, packSize, cadence]);
+  useEffectS(() => { try { localStorage.setItem(SUB_KEY, JSON.stringify({ slots, packSize, cadence, linked })); } catch (e) { /* ignore */ } }, [slots, packSize, cadence, linked]);
 
   // ── derived loadout ──
   const active = slots.slice(0, packSize);
@@ -577,13 +590,36 @@ function SubscribePage({ onAdd, onSubscribe }) {
     onContextMenu: e => e.preventDefault(),
   });
 
-  // Subscribing: a few bottles fly up into the header Fridge, then the pack lands in the cart.
+  const packLines = () => subPicks.map(({ f, qty }) => (
+    { ...f, qty, id: `${f.id}--sub`, price: subUnitCents(f.price, cad.save) / 100, sub: `SUB · ${cad.label.toUpperCase()} · −${cad.save}%`, subscription: cad.id }
+  ));
+
+  // Builder → Fridge: while linked, every edit replaces the Fridge's pack; an unfilled fridge takes it out.
+  const packSig = subPicks.map(p => `${p.f.id}:${p.qty}`).join(',') + '|' + cadence + '|' + isFull;
+  useEffectS(() => {
+    if (!linked || !onSync) return;
+    pushed.current = isFull ? 'full' : 'empty';
+    onSync(isFull ? packLines() : []);
+  }, [packSig, linked]);
+  // Fridge → builder: once the Fridge's pack no longer matches the builder (subscribed in PayPal,
+  // changed or removed in the Fridge, or rebuilt by the concierge), unlink so the builder never
+  // overwrites it. "Add to Fridge" sends the builder's pack again.
+  const fridgeSig = fridgeSubs.map(i => `${i.id.replace(/--sub$/, '')}:${i.qty}:${i.subscription}`).sort().join(',');
+  useEffectS(() => {
+    if (!linked || pushed.current !== 'full') return;
+    const want = subPicks.map(p => `${p.f.id}:${p.qty}:${cadence}`).sort().join(',');
+    if (fridgeSig !== want) { pushed.current = null; setLinked(false); }
+  }, [fridgeSig]);
+
+  // Adding the pack: a few bottles fly up into the header Fridge, then the pack lands in the Fridge,
+  // which opens on the "Start subscription" (PayPal) step.
   const checkout = () => {
-    const lines = subPicks.map(({ f, qty }) => (
-      { ...f, qty, id: `${f.id}--sub`, price: subUnitCents(f.price, cad.save) / 100, sub: `SUB · ${cad.label.toUpperCase()} · −${cad.save}%`, subscription: cad.id }
-    ));
-    const send = () => { if (onSubscribe) onSubscribe(lines); else lines.forEach(l => onAdd(l, l.qty)); };
-    if (!window.SLGame || reduced) { send(); return; }
+    const lines = packLines();
+    const send = () => {
+      pushed.current = 'full'; setLinked(true);
+      if (onSubscribe) onSubscribe(lines); else lines.forEach(l => onAdd(l, l.qty));
+    };
+    if (linked || !window.SLGame || reduced) { send(); return; }
     const picksEls = subShuffle(Object.keys(slotEls.current).map(Number).filter(i => i < packSize && slotsRef.current[i])).slice(0, 3);
     setDoorOpen(true);
     Promise.all(picksEls.map((i, n) => new Promise(res => setTimeout(() => window.SLGame.loot(slotEls.current[i], subImg(slotsRef.current[i])).then(res), 120 + n * 110)))).then(send);
@@ -752,9 +788,11 @@ function SubscribePage({ onAdd, onSubscribe }) {
               <div className="sb-line is-total"><span>Per delivery</span><b>{subMoney(discounted)}</b></div>
               <button type="button" onClick={checkout} disabled={!isFull}
                 className={'btn btn-xl sb-cta' + (isFull ? ' btn-primary' : '')}>
-                {isFull ? <>Start subscription <Icon name="arrowR" size={16}/></> : `Stock ${remaining} more`}
+                {!isFull ? `Stock ${remaining} more`
+                  : linked ? <>In your Fridge · Open it <Icon name="arrowR" size={16}/></>
+                  : <>Add to Fridge <Icon name="arrowR" size={16}/></>}
               </button>
-              <div className="mono-sm sb-fine">Billed {cad.label.toLowerCase()} by PayPal · pause or cancel anytime · free shipping</div>
+              <div className="mono-sm sb-fine">{linked && isFull ? 'Changes here update your Fridge' : 'Then start it in your Fridge'} · billed {cad.label.toLowerCase()} by PayPal · pause or cancel anytime</div>
             </div>
           </div>
         </div>

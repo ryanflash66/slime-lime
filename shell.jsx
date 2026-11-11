@@ -130,6 +130,9 @@ function useCart() {
     setCart(c => [...c.filter(i => !i.subscription), ...lines]);
     setCartOpen(true);
   };
+  // Subscribe page: keep the Fridge's pack in step with the builder without opening the Fridge.
+  // An empty list takes the pack out.
+  const syncSubscription = lines => setCart(c => [...c.filter(i => !i.subscription), ...lines]);
   const remove = id => setCart(c => c.filter(i => i.id !== id));
   const clear = () => setCart([]);
   // Flavor Concierge: the agent's pack replaces the one-time bottles in the fridge
@@ -159,7 +162,7 @@ function useCart() {
   const count = cart.reduce((s, i) => s + i.qty, 0);
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
-  return { cart, count, total, add, replaceSubscription, inc, dec, remove, setQty, clear, fillPack, removePaid, cartOpen, setCartOpen };
+  return { cart, count, total, add, replaceSubscription, syncSubscription, inc, dec, remove, setQty, clear, fillPack, removePaid, cartOpen, setCartOpen };
 }
 
 // ─────────────────────────────────────────────────────────────
