@@ -566,7 +566,7 @@ function SubscribePage({ onAdd, onSubscribe }) {
     const lines = Object.entries(picks).map(([id, qty]) => {
       const f = byId(id);
       if (!f || qty <= 0) return null;
-      return { ...f, qty, id: `${f.id}--sub`, price: f.price * (1 - cad.save / 100), sub: `SUB · ${cad.label.toUpperCase()} · −${cad.save}%`, subscription: cad.id };
+      return { ...f, qty, id: `${f.id}--sub`, price: Math.round(f.price * (100 - cad.save)) / 100, sub: `SUB · ${cad.label.toUpperCase()} · −${cad.save}%`, subscription: cad.id };
     }).filter(Boolean);
     const send = () => { if (onSubscribe) onSubscribe(lines); else lines.forEach(l => onAdd(l, l.qty)); };
     if (!window.SLGame || reduced) { send(); return; }

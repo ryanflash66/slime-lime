@@ -127,6 +127,7 @@ function useCart() {
     setCartOpen(true);
   };
   const remove = id => setCart(c => c.filter(i => i.id !== id));
+  const clear = () => setCart([]);
   // Fridge close-up: set a flavor's exact count (0 clears the slot) without reopening anything.
   const setQty = (f, qty) => setCart(c => {
     if (qty <= 0) return c.filter(i => i.id !== f.id);
@@ -138,8 +139,110 @@ function useCart() {
   const count = cart.reduce((s, i) => s + i.qty, 0);
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
-  return { cart, count, total, add, replaceSubscription, inc, dec, remove, setQty, cartOpen, setCartOpen };
+  return { cart, count, total, add, replaceSubscription, inc, dec, remove, setQty, clear, cartOpen, setCartOpen };
 }
+
+// ─────────────────────────────────────────────────────────────
+// PAYPAL (sandbox) CHECKOUT
+// The browser only ever sends flavor ids + quantities. /api/paypal/orders prices the
+// cart on the server and creates the PayPal order; /api/paypal/capture captures it.
+// ─────────────────────────────────────────────────────────────
+let shellPayPalPromise = null;
+
+function shellLoadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = true;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('PayPal script failed to load'));
+    document.head.appendChild(s);
+  });
+}
+
+// Loads config + the PayPal v6 web SDK once per page; resolves to { sdk, env }.
+function shellLoadPayPal() {
+  if (shellPayPalPromise) return shellPayPalPromise;
+  shellPayPalPromise = (async () => {
+    const res = await fetch('/api/paypal/config');
+    if (!res.ok) throw Object.assign(new Error('Checkout is not configured'), { unavailable: true });
+    const { clientId, env } = await res.json();
+    const host = env === 'live' ? 'https://www.paypal.com' : 'https://www.sandbox.paypal.com';
+    if (!window.paypal || !window.paypal.createInstance) await shellLoadScript(`${host}/web-sdk/v6/core`);
+    const sdk = await window.paypal.createInstance({ clientId, components: ['paypal-payments'], pageType: 'cart' });
+    const methods = await sdk.findEligibleMethods({ currencyCode: 'USD' });
+    if (!methods.isEligible('paypal')) throw Object.assign(new Error('PayPal is not available here'), { unavailable: true });
+    return { sdk, env };
+  })();
+  // Let a later open retry after a failure.
+  shellPayPalPromise.catch(() => { shellPayPalPromise = null; });
+  return shellPayPalPromise;
+}
+
+async function shellPostJson(url, body) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+// status: idle | loading | ready | paying | capturing | paid | cancelled | error | unavailable
+function useShellPayPal({ active, items, onPaid }) {
+  const [state, setState] = useState({ status: 'idle', env: null, message: '', receipt: null });
+  const sessionRef = useRef(null);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const onPaidRef = useRef(onPaid);
+  onPaidRef.current = onPaid;
+
+  useEffect(() => {
+    if (!active || sessionRef.current) return;
+    let alive = true;
+    setState(s => ({ ...s, status: 'loading', message: '' }));
+    shellLoadPayPal().then(({ sdk, env }) => {
+      if (!alive) return;
+      sessionRef.current = sdk.createPayPalOneTimePaymentSession({
+        onApprove: async data => {
+          setState(s => ({ ...s, status: 'capturing', message: '' }));
+          try {
+            const r = await shellPostJson('/api/paypal/capture', { orderId: data.orderId });
+            if (r.status !== 'COMPLETED') throw new Error(`Payment ${String(r.status || 'not completed').toLowerCase()}`);
+            setState(s => ({ ...s, status: 'paid', receipt: r, message: '' }));
+            if (onPaidRef.current) onPaidRef.current(r);
+          } catch (e) {
+            setState(s => ({ ...s, status: 'error', message: e.message || 'Payment could not be captured' }));
+          }
+        },
+        onCancel: () => setState(s => ({ ...s, status: 'cancelled', message: 'Payment cancelled. Your fridge is still stocked.' })),
+        onError: () => setState(s => ({ ...s, status: 'error', message: 'PayPal hit an error. Try again.' })),
+      });
+      setState(s => ({ ...s, status: 'ready', env }));
+    }).catch(e => {
+      if (!alive) return;
+      setState(s => ({ ...s, status: e.unavailable ? 'unavailable' : 'error',
+        message: e.unavailable ? 'Checkout is offline on this host' : 'PayPal failed to load. Reopen the cart to retry.' }));
+    });
+    return () => { alive = false; };
+  }, [active]);
+
+  // Called straight from the click handler so the PayPal popup isn't blocked.
+  const start = () => {
+    const session = sessionRef.current;
+    if (!session) return;
+    setState(s => ({ ...s, status: 'paying', message: '', receipt: null }));
+    const lines = itemsRef.current.map(i => ({ id: i.id, qty: i.qty, subscription: i.subscription || undefined }));
+    const orderPromise = shellPostJson('/api/paypal/orders', { items: lines })
+      .then(d => ({ orderId: d.orderId }))
+      .catch(e => {
+        setState(s => ({ ...s, status: 'error', message: e.message || 'Could not start checkout' }));
+        throw e;
+      });
+    Promise.resolve(session.start({ presentationMode: 'auto' }, orderPromise)).catch(() => {});
+  };
+
+  return { ...state, start };
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // SHELL HELPERS (prefixed: all scripts share one global scope)
@@ -779,5 +882,5 @@ function PageBottomCTA({ onAdd, label = "Add to fridge", price = "$2.50/bottle" 
 // ─────────────────────────────────────────────────────────────
 Object.assign(window, {
   Icon, Wordmark, Nav, Footer, Can, PageBottomCTA,
-  useFlavorTheme, useCart, useRoute, useRouteStage, navTo, FLAVORS,
+  useFlavorTheme, useCart, useRoute, useRouteStage, navTo, FLAVORS, useShellPayPal,
 });

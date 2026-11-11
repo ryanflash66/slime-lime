@@ -204,7 +204,7 @@ function FridgeDetail({ f, index, qty, onSetQty, onBack, flipFrom, reduced, back
   );
 }
 
-function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, total }) {
+function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, total, onPaid }) {
   const flavors = window.FLAVORS;
   const panelRef = useRefF(null);
   const closeRef = useRefF(null);
@@ -217,8 +217,8 @@ function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, total }) {
   const [view, setView] = useStateF(null);          // null = shelves, else a flavor id
   const viewRef = useRefF(view);
   viewRef.current = view;
-  const [checkoutNote, setCheckoutNote] = useStateF(false);
   const reduced = shellUseMedia(SHELL_REDUCED_MOTION);
+  const pay = window.useShellPayPal({ active: open && items.length > 0, items, onPaid });
   const onCloseRef = useRefF(onClose);
   onCloseRef.current = onClose;
 
@@ -259,7 +259,6 @@ function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, total }) {
       const raf = requestAnimationFrame(() => requestAnimationFrame(focusClose));
       return () => cancelAnimationFrame(raf);
     }
-    setCheckoutNote(false);
     const t = setTimeout(() => setView(null), 300);
     const el = returnFocusRef.current;
     returnFocusRef.current = null;
@@ -367,12 +366,25 @@ function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, total }) {
             </div>
           )}
           <button className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center' }}
-            disabled={items.length === 0} onClick={() => setCheckoutNote(true)}>
-            Checkout · {fridgeMoney(total)}
+            disabled={items.length === 0 || !['ready', 'cancelled', 'error', 'paid'].includes(pay.status)}
+            aria-busy={['loading', 'paying', 'capturing'].includes(pay.status)}
+            onClick={pay.start}>
+            {pay.status === 'loading' ? 'Loading PayPal…'
+              : pay.status === 'paying' ? 'Waiting for PayPal…'
+              : pay.status === 'capturing' ? 'Confirming payment…'
+              : pay.status === 'unavailable' || pay.status === 'failed' ? 'Checkout offline'
+              : <>Pay with PayPal · {fridgeMoney(total)}</>}
           </button>
-          <div role="status" aria-live="polite" style={{ font: '500 12px var(--font-mono)', color: 'var(--fg-2)', textAlign: 'center', letterSpacing: '0.04em', marginTop: checkoutNote ? 10 : 0 }}>
-            {checkoutNote ? 'Demo store — checkout is disabled' : ''}
+          <div role="status" aria-live="polite" style={{
+            font: '500 12px var(--font-mono)', color: pay.status === 'paid' ? 'var(--accent)' : 'var(--fg-2)',
+            textAlign: 'center', letterSpacing: '0.04em', marginTop: pay.message || pay.status === 'paid' ? 10 : 0 }}>
+            {pay.status === 'paid' && pay.receipt ? `PAID $${pay.receipt.amount} · ORDER ${pay.receipt.orderId}` : pay.message}
           </div>
+          {pay.env === 'sandbox' && (
+            <div style={{ font: '400 11px var(--font-mono)', color: 'var(--fg-4)', textAlign: 'center', marginTop: 10, letterSpacing: '0.06em' }}>
+              PAYPAL SANDBOX · TEST MONEY ONLY
+            </div>
+          )}
         </div>
       </div>
     </div>
