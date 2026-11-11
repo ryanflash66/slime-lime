@@ -173,7 +173,14 @@ function SubscribeRadar({ values, color }) {
 function subscribeLoad() {
   try {
     const s = JSON.parse(localStorage.getItem(SUB_KEY) || 'null');
-    if (s && Array.isArray(s.slots) && s.slots.length === SUB_MAX && SUB_MODELS.some(m => m.size === s.packSize)) return s;
+    if (s && Array.isArray(s.slots) && s.slots.length === SUB_MAX && SUB_MODELS.some(m => m.size === s.packSize)) {
+      // Drop flavor ids that no longer exist, so a retired flavor can't count toward a full pack
+      // and then vanish at checkout (an underfilled subscription).
+      const known = new Set((window.FLAVORS || []).map(f => f.id));
+      const slots = s.slots.map(id => (id && known.has(id) ? id : null));
+      const cadence = SUB_CADENCES.some(c => c.id === s.cadence) ? s.cadence : 'monthly';
+      return { ...s, slots, cadence };
+    }
   } catch (e) { /* ignore */ }
   return null;
 }

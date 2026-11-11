@@ -205,9 +205,17 @@ function roundingProblems() {
   const src = readFileSync(path.join(ROOT, 'subscribe.jsx'), 'utf8');
   const m = /\bconst\s+subUnitCents\s*=\s*\(([^)]*)\)\s*=>\s*([^;\n]+);/.exec(src);
   if (!m) return ['  subscribe.jsx no longer defines "const subUnitCents = (dollars, save) => ...;" on one line, so its rounding cannot be checked'];
+  // Only compile the expression if it is plain arithmetic over its own parameters and Math.round,
+  // so a changed subscribe.jsx can never make this script run arbitrary code.
+  const params = m[1].split(',').map(s => s.trim());
+  const allowed = new Set([...params, 'Math', 'round']);
+  const idents = m[2].match(/[A-Za-z_$][\w$]*/g) || [];
+  if (!/^[\w$\s().*+\-/,]*$/.test(m[2]) || idents.some(id => !allowed.has(id))) {
+    return ['  subscribe.jsx subUnitCents is no longer plain arithmetic (only its parameters, numbers, + - * / and Math.round), so its rounding cannot be checked safely'];
+  }
   let siteUnit;
   try {
-    siteUnit = new Function(...m[1].split(',').map(s => s.trim()), `return (${m[2]});`);
+    siteUnit = new Function(...params, `return (${m[2]});`);
   } catch (e) {
     return [`  subscribe.jsx subUnitCents could not be read: ${e.message}`];
   }
