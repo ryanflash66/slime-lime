@@ -1,5 +1,8 @@
 // POST /api/concierge/chat
-// Body: { messages: [{ role, content }], pack?: [{ id, qty }], history?: [{ orderId, lines, at }], session? }
+// Body: { messages: [{ role, content }], pack?: [{ id, qty }], history?, session? }
+//   history: this browser's sl-orders, newest first:
+//     { kind: 'order', orderId, lines, at } or { kind: 'subscription', subscriptionId, sig, cadence, lines, at }.
+//   A subscription's sig is verified and dropped server-side (_lib/concierge-subs.js); never log the body.
 // Returns { reply, pack, checkout, toolsUsed, model }. model is 'anthropic', 'gemini' or 'gateway'.
 // pack is set when the agent built a new pack;
 // checkout ({ orderId, total, lines, env }) is set when it created the PayPal order.
@@ -14,7 +17,7 @@ const MAX_BODY_BYTES = 32 * 1024;
 const MAX_MESSAGES = 20;       // the panel sends its last 20; the model sees the last 16 (MAX_TURNS)
 const MAX_MESSAGE_CHARS = 2000; // hard cap; the model sees at most 600 per message (MAX_CHARS)
 const MAX_PACK_LINES = MAX_LINES; // 20, the catalog's cart line limit
-const MAX_HISTORY = 5;         // the panel sends at most 5 orders (CC_MAX_ORDERS); cleanHistory reads 5
+const MAX_HISTORY = 5;         // the panel sends at most 5 entries (CC_MAX_ORDERS): its newest subscription plus orders
 
 function tooBig(req, body) {
   const declared = Number(req.headers && req.headers['content-length']);
