@@ -34,7 +34,7 @@ Lines in quotes under "Ryan says" are spoken out loud to the site. Lines in *ita
 | # | Time | Screen | Ryan says | Agent says / does |
 |---|------|--------|-----------|-------------------|
 | **Step 1: Open and pick a mode** | | | | |
-| 1 | 0:00–0:06 | Chrome, production URL, home page hero | *"This is Slime Lime. You can shop it by voice and subscribe with PayPal."* | Mode picker appears: Hands-free or Classic. |
+| 1 | 0:00–0:06 | Chrome, production URL, home page hero | *"This is Slime Lime. You can shop it by voice and subscribe with PayPal."* | Mode picker appears: Hands-free or Legacy. |
 | 2 | 0:06–0:12 | Mode picker | (taps **Hands-free**) | Concierge panel opens and starts listening. No wake word; it keeps listening. |
 | **Step 2: Build a pack** | | | | |
 | 3 | 0:12–0:22 | Concierge panel over the home page | "I play ranked FPS late at night, keep it light on caffeine." | Replies out loud. Asks **at most one** question (for example, how many bottles per delivery). |

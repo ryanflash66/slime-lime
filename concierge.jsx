@@ -392,8 +392,10 @@ function Concierge({ cart, fridgeOpen }) {
     return () => window.removeEventListener('sl-confirm', onConfirm);
   }, []);
 
+  // Follow the newest message. Before the first one, show the intro from its first line (DAR-714).
   useEffectC(() => {
-    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+    if (!listRef.current) return;
+    listRef.current.scrollTop = msgs.length || thinking ? listRef.current.scrollHeight : 0;
   }, [msgs, thinking, open]);
 
   React.useLayoutEffect(() => { if (panelRef.current) panelRef.current.inert = !open; }, [open]);
@@ -443,6 +445,12 @@ function Concierge({ cart, fridgeOpen }) {
           session: sessionRef.current,
           subscriptions: ccSubsForChat(createdSubsRef.current),
           cadence: cadenceRef.current || undefined,
+          // An earlier reply's Pay / Subscribe button still waiting in the chat, so the agent may
+          // point to it. With neither, it never mentions a PayPal button (DAR-708).
+          onScreen: {
+            checkout: !!(checkoutRef.current && !checkoutRef.current.paid),
+            subscription: !!(subscriptionRef.current && !subscriptionRef.current.approved),
+          },
           ...(confirming ? {
             confirm: { action: live.action, subscriptionId: live.subscriptionId },
             pending: { action: live.action, subscriptionId: live.subscriptionId, issuedAt: live.issuedAt, token: live.token },
