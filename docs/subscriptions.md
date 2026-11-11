@@ -17,9 +17,10 @@ All three plans belong to one product, **Slime Lime Subscription Pack** (`type: 
 
 - one `REGULAR` billing cycle with `total_cycles: 0`, so it bills until the subscriber cancels;
 - a placeholder fixed price of 10.00 USD. The server must set the real pack price on each
-  subscription it creates (a plan override, priced by `priceCart`); the placeholder only applies
-  if a subscription has no override. Plan IDs are public, so a buyer could start a subscription
-  at the placeholder price from the JS SDK. Fulfillment must check the billed amount;
+  subscription it creates (a plan override, priced by `priceSubscription`); the placeholder only
+  applies if a subscription has no override. Plan IDs are public, so a buyer could start a
+  subscription at the placeholder price from the JS SDK. Fulfillment must check the billed amount
+  (see [Checking the billed amount](#checking-the-billed-amount-verifybilledamount));
 - `payment_preferences: { auto_bill_outstanding: true, payment_failure_threshold: 1 }`.
 
 ## How it works
@@ -82,3 +83,107 @@ to provision the plans up front. Otherwise the first subscription request provis
 - The PayPal REST app must have **Subscriptions** enabled (developer dashboard → app → Features).
   Without it, catalog and plan calls fail with `403 NOT_AUTHORIZED`, which the endpoint returns as
   `502` with the `debug_id`.
+- `SUB_SIGNING_SECRET` set in Vercel (any long random string) for `POST /api/paypal/subscriptions`.
+  Changing it invalidates every `sig` already handed out.
+
+## Creating a subscription
+
+`POST /api/paypal/subscriptions` (`api/paypal/subscriptions.js`) prices the pack on the server and
+creates the PayPal subscription the buyer then approves.
+
+Request:
+
+```json
+{
+  "lines": [{ "id": "lemon-lime", "qty": 6 }, { "id": "cherry", "qty": 4 }, { "id": "mango", "qty": 2 }],
+  "cadence": "monthly"
+}
+```
+
+`id` is a plain flavor id. The server adds the `--sub` suffix itself, so a subscription costs
+exactly what the same `--sub` lines cost in the cart: `priceSubscription(lines, cadence)` in
+`catalog.js` runs them through `priceCart` (1 to 20 lines, quantity 1 to 96, known cadence) and
+returns `{ totalCents, total, packCode }`.
+
+The PayPal call is `POST /v1/billing/subscriptions` with:
+
+- `plan_id`: `ensurePlans()[cadence]`;
+- `plan: { billing_cycles: [{ sequence: 1, pricing_scheme: { fixed_price: { value: <total>, currency_code: "USD" } } }] }`,
+  the inline price override. It is always sent; without it PayPal would bill the 10.00 placeholder;
+- `custom_id`: the pack code (below);
+- `application_context: { brand_name: "Slime Lime", shipping_preference: "NO_SHIPPING", user_action: "SUBSCRIBE_NOW" }`.
+
+Response `201`:
+
+```json
+{ "subscriptionId": "I-…", "sig": "…", "total": "21.96", "cadence": "monthly" }
+```
+
+The subscription starts as `APPROVAL_PENDING`; the browser hands `subscriptionId` to the PayPal
+JS SDK for approval. `sig` is `base64url(HMAC-SHA256(SUB_SIGNING_SECRET, subscriptionId))`
+(`subsign.sign(id)` in `api/_lib/subsign.js`). Later calls that take a subscription ID from the
+browser should require the `sig` and check it with `subsign.verify(id, sig)`, which compares in
+constant time and returns `false` (never throws) on missing, malformed or wrong-length input.
+
+Errors: `400` for a bad pack or cadence, `405` for any method but `POST`, and `503` when
+`SUB_SIGNING_SECRET` (or the PayPal keys) is missing. The signing secret is checked before any
+PayPal call, so no unsigned subscription is ever created. PayPal errors come back with
+`paypal: { name, issue, debug_id }` like the other endpoints.
+
+### Pack codes (`custom_id`)
+
+The pack is stored on the subscription as a pack code: each line as a two-letter flavor code plus
+its quantity, joined with `.`, in the order given. For example `lm6.ch4.mg2` is 6 Lemon-Lime,
+4 Cherry Cool and 2 Mango Rush. Lines are not merged, so the code decodes to exactly the lines
+that were priced.
+
+| Flavor id    | Code |
+| ------------ | ---- |
+| `lemon-lime` | `lm` |
+| `cherry`     | `ch` |
+| `blue-rasp`  | `br` |
+| `mango`      | `mg` |
+| `grape`      | `gp` |
+| `watermelon` | `wm` |
+
+Codes live in `FLAVOR_CODES` in `catalog.js`. Never reuse or reassign one: a live subscription
+keeps its `custom_id` for as long as it bills. A new flavor needs a new code (the module refuses to
+load without one). `decodePackCode(code)` turns a code back into `[{ id, qty }]`, or returns `null`
+if it is malformed. The longest accepted pack (20 lines of 96) is 99 characters, inside PayPal's
+127-character limit.
+
+`node scripts/check-sub-pricing.mjs` checks, over thousands of random packs and every cadence,
+that `priceSubscription` equals `priceCart` for the same `--sub` lines, that pack codes round-trip,
+and that the worst case fits in `custom_id`. Run it along with `node scripts/check-prices.mjs`
+before merging.
+
+## Checking the billed amount (`verifyBilledAmount`)
+
+Plan IDs are public and every plan carries the 10.00 USD placeholder. A buyer can skip our endpoint
+and start a subscription from the PayPal JS SDK on a plan ID, at the placeholder price or with an
+inline override and `custom_id` of their own. Such a subscription is real, and PayPal will bill it.
+So never trust a subscription's price or contents without checking them.
+
+`verifyBilledAmount(subscription, planIds?)` in `api/_lib/subscriptions.js` does that check. Pass
+it the result of `getSubscription(id)`, which calls
+`GET /v1/billing/subscriptions/{id}?fields=plan`. The `fields=plan` part matters: only then does
+PayPal include the subscription's effective `plan.billing_cycles`, where an inline override shows up
+as `pricing_scheme.fixed_price` (and `plan_overridden` is `true`). Without it there is nothing to
+compare, and the check fails.
+
+It resolves `{ ok: true, cadence, lines, packCode, expected }` only when:
+
+1. `custom_id` decodes to a pack (`decodePackCode`);
+2. `plan_id` is one of our cadence plans (`ensurePlans()`, or the `planIds` map you pass), which
+   gives the cadence;
+3. every billing cycle's `fixed_price` is in USD and equals `priceSubscription(pack, cadence).total`
+   (a cycle with no price, such as a free trial, fails);
+4. `quantity` is absent or `"1"`;
+5. `billing_info.last_payment.amount`, once PayPal has taken a payment, is that same amount.
+
+Otherwise it resolves `{ ok: false, reason, expected?, actual? }`. It only rejects when
+`ensurePlans()` cannot reach PayPal, so a caller can tell "wrong price" from "could not check".
+
+Status, manage and fulfillment code (DAR-695 and later) should check both: `sig` (this server
+created the subscription) and `verifyBilledAmount` (it bills what the pack costs). Do not fulfill
+a subscription that fails either one.
