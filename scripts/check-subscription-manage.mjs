@@ -119,6 +119,11 @@ globalThis.fetch = async (url, init = {}) => {
     if (method === 'POST' && m[2]) {
       const r = fake.onAction && fake.onAction(m[2], body);
       if (r) return r;
+      // What the sandbox does: an unapproved subscription can't be cancelled, and the error
+      // claims it doesn't exist.
+      if (m[2] === 'cancel' && fake.sub.status === 'APPROVAL_PENDING') {
+        return json(404, { name: 'RESOURCE_NOT_FOUND', debug_id: 'dbg404', details: [{ issue: 'INVALID_RESOURCE_ID' }] });
+      }
       fake.sub = { ...fake.sub, status: NEXT_STATE[m[2]] };
       return new Response(null, { status: 204 });
     }
@@ -171,6 +176,7 @@ function check(name, cond, detail) {
 const STATUS_KEYS = ['id', 'status', 'cadence', 'nextBillingTime', 'lastPayment', 'amount', 'pack', 'priceOk'];
 const NOT_LINKED = "This subscription isn't linked to this browser.";
 const ENDED = 'This subscription has already ended.';
+const NOT_APPROVED = "This subscription hasn't been approved in PayPal yet, so there's nothing to cancel. It won't bill unless it's approved.";
 const MSG = {
   pause: 'Only an active subscription can be paused.',
   resume: 'Only a paused subscription can be resumed.',
@@ -275,6 +281,20 @@ for (const [label, s] of [['missing sig', undefined], ['empty sig', ''], ['tampe
   check('APPROVAL_PENDING still priceOk', b.priceOk === true && b.amount === PRICED.total, b);
 }
 
+// PayPal trims trailing zeros ("21.6"); the response always shows cents.
+{
+  const twelve = priceSubscription([{ id: 'lemon-lime', qty: 6 }, { id: 'cherry', qty: 6 }], 'monthly');
+  const trimmed = twelve.total.replace(/0+$/, '').replace(/\.$/, '');
+  check('trailing-zero fixture really has a trailing zero', trimmed !== twelve.total, twelve.total);
+  const sub = subscription('ACTIVE', { custom_id: twelve.packCode });
+  sub.plan.billing_cycles[0].pricing_scheme.fixed_price.value = trimmed;
+  sub.billing_info.last_payment.amount.value = trimmed;
+  reset(sub);
+  const r = await manage('status');
+  check(`amount "${trimmed}" -> "${twelve.total}"`, r.statusCode === 200 && r.body.amount === twelve.total
+    && r.body.lastPayment.amount === twelve.total && r.body.priceOk === true, r.body);
+}
+
 // status: someone's own price straight through the SDK
 {
   const cheap = subscription('ACTIVE', {
@@ -308,7 +328,7 @@ const STATES = ['APPROVAL_PENDING', 'APPROVED', 'ACTIVE', 'SUSPENDED', 'CANCELLE
 const EXPECT = {
   pause:  { ACTIVE: 'SUSPENDED' },
   resume: { SUSPENDED: 'ACTIVE' },
-  cancel: { APPROVAL_PENDING: 'CANCELLED', APPROVED: 'CANCELLED', ACTIVE: 'CANCELLED', SUSPENDED: 'CANCELLED' },
+  cancel: { APPROVED: 'CANCELLED', ACTIVE: 'CANCELLED', SUSPENDED: 'CANCELLED' },
 };
 const PATH = { pause: 'suspend', resume: 'activate', cancel: 'cancel' };
 const REASON = { pause: 'Paused by shopper via Slime Lime', resume: 'Resumed by shopper via Slime Lime', cancel: 'Cancelled by shopper via Slime Lime' };
@@ -327,6 +347,11 @@ for (const action of ['pause', 'resume', 'cancel']) {
       check(`${label} sends the reason`, sent[0] && sent[0].body && sent[0].body.reason === REASON[action]
         && Object.keys(sent[0].body).length === 1, sent[0] && sent[0].body);
       check(`${label} does not leak the subscriber`, !JSON.stringify(r.body).includes('Secretia'));
+    } else if (action === 'cancel' && state === 'APPROVAL_PENDING') {
+      // Allowed by us, refused by PayPal (404): a 409 that says why, not a 502.
+      check(`${label} -> 409`, r.statusCode === 409, `${r.statusCode} ${JSON.stringify(r.body)}`);
+      check(`${label} message`, r.body && r.body.error === NOT_APPROVED && r.body.status === 'APPROVAL_PENDING', r.body);
+      check(`${label} tried PayPal once`, actionCalls().length === 1, actionCalls());
     } else {
       const want = state === 'CANCELLED' || state === 'EXPIRED' ? ENDED : MSG[action];
       check(`${label} -> 409`, r.statusCode === 409, `${r.statusCode} ${JSON.stringify(r.body)}`);
@@ -378,7 +403,6 @@ for (const [action, before, after, want] of [
     ['GET 404', () => { fake.getStatus = () => json(404, { name: 'RESOURCE_NOT_FOUND', details: [{ issue: 'INVALID_RESOURCE_ID' }] }); }, 'status'],
     ['GET 500', () => { fake.getStatus = () => json(500, { name: 'INTERNAL_SERVER_ERROR' }); }, 'status'],
     ['GET wrong id', () => { fake.getStatus = () => json(200, { ...subscription('ACTIVE'), id: 'I-SOMEONEELSE1' }); }, 'status'],
-    ['fresh GET after action fails', () => { fake.onGetSub = () => json(503, { name: 'SERVICE_UNAVAILABLE' }); }, 'cancel'],
     ['network down', () => { fake.network = true; }, 'status'],
   ];
   for (const [label, arrange, action] of cases) {
@@ -388,6 +412,25 @@ for (const [action, before, after, want] of [
     check(`${label} -> 502`, r.statusCode === 502, `${r.statusCode} ${JSON.stringify(r.body)}`);
     check(`${label} does not leak the subscriber`, !JSON.stringify(r.body || {}).includes('Secretia'));
   }
+}
+
+// The action went through but the re-read failed: still a success, with the state it led to.
+for (const [action, before, after] of [['cancel', 'ACTIVE', 'CANCELLED'], ['pause', 'ACTIVE', 'SUSPENDED'], ['resume', 'SUSPENDED', 'ACTIVE']]) {
+  reset(subscription(before));
+  fake.onGetSub = () => json(503, { name: 'SERVICE_UNAVAILABLE' });
+  const r = await manage(action);
+  const label = `${action} done, re-read fails`;
+  check(`${label} -> 200 ${after}`, r.statusCode === 200 && r.body.status === after, `${r.statusCode} ${JSON.stringify(r.body)}`);
+  check(`${label} keeps the status shape`, JSON.stringify(Object.keys(r.body || {}).sort()) === JSON.stringify([...STATUS_KEYS].sort()), r.body);
+  check(`${label} does not leak the subscriber`, !JSON.stringify(r.body || {}).includes('Secretia'));
+}
+
+// 422 on cancelling an unapproved subscription also says it was never approved.
+{
+  reset(subscription('APPROVAL_PENDING'));
+  fake.onAction = () => invalid();
+  const r = await manage('cancel');
+  check('422 on cancel of APPROVAL_PENDING -> 409 not approved', r.statusCode === 409 && r.body.error === NOT_APPROVED, r.body);
 }
 
 // ---- report -----------------------------------------------------------------------------------

@@ -9,31 +9,38 @@
 const { decodePackCode } = require('../_lib/catalog');
 const { paypalFetch, sendError, readJson } = require('../_lib/paypal');
 const { ensurePlans } = require('../_lib/plans');
-const { getSubscription, verifyBilledAmount } = require('../_lib/subscriptions');
+const { getSubscription, verifyBilledAmount, cadenceForPlan } = require('../_lib/subscriptions');
 const subsign = require('../_lib/subsign');
 
 const ID_PATTERN = /^I-[A-Z0-9]{6,32}$/;
 
 const ENDED = "This subscription has already ended.";
+// PayPal refuses to cancel a subscription nobody has approved yet (sandbox answers
+// 404 RESOURCE_NOT_FOUND / INVALID_RESOURCE_ID). It never bills unless approved.
+const NOT_APPROVED = "This subscription hasn't been approved in PayPal yet, so there's nothing to cancel. It won't bill unless it's approved.";
 
-// action -> PayPal endpoint, reason sent to PayPal, and the state the subscription must be in.
+// action -> PayPal endpoint, reason sent to PayPal, the states it is allowed from, and the state
+// it leads to.
 const ACTIONS = {
   pause: {
     path: 'suspend',
     reason: 'Paused by shopper via Slime Lime',
     allowed: ['ACTIVE'],
+    target: 'SUSPENDED',
     refusal: 'Only an active subscription can be paused.',
   },
   resume: {
     path: 'activate',
     reason: 'Resumed by shopper via Slime Lime',
     allowed: ['SUSPENDED'],
+    target: 'ACTIVE',
     refusal: 'Only a paused subscription can be resumed.',
   },
   cancel: {
     path: 'cancel',
     reason: 'Cancelled by shopper via Slime Lime',
     allowed: ['APPROVAL_PENDING', 'APPROVED', 'ACTIVE', 'SUSPENDED'],
+    target: 'CANCELLED',
     refusal: ENDED,
   },
 };
@@ -67,8 +74,18 @@ function conflict(message, state) {
   return err;
 }
 
+// The message for a call PayPal itself refused while the subscription is in `state`
+// (unknown when the re-read failed).
+function paypalRefusal(action, state) {
+  if (action === 'cancel' && state === 'APPROVAL_PENDING') return NOT_APPROVED;
+  return refusal(action, state) || ACTIONS[action].refusal;
+}
+
+// PayPal money -> "21.60". PayPal trims trailing zeros ("21.6"); show cents like the
+// subscriptions endpoint's `total`. Anything that is not a plain amount is passed as is.
 function amountOf(money) {
-  return money && typeof money.value === 'string' ? money.value : null;
+  if (!money || typeof money.value !== 'string') return null;
+  return /^\d+(\.\d{1,2})?$/.test(money.value) ? Number(money.value).toFixed(2) : money.value;
 }
 
 // The per-cycle price PayPal bills: the REGULAR cycle's fixed price (else the first cycle's).
@@ -82,10 +99,7 @@ function billedAmount(subscription) {
 // Builds the response from an allow-list of fields. Nothing about the subscriber (name, email,
 // address, payer id) is ever copied, whatever PayPal sends.
 function toStatus(subscription, planIds, check) {
-  const planId = subscription.plan_id;
-  const cadence = typeof planId === 'string' && planId
-    ? Object.keys(planIds).find((c) => [].concat(planIds[c]).includes(planId)) || null
-    : null;
+  const cadence = cadenceForPlan(subscription.plan_id, planIds);
   const billing = subscription.billing_info || {};
   const last = billing.last_payment;
   const lastAmount = last && amountOf(last.amount);
@@ -102,9 +116,10 @@ function toStatus(subscription, planIds, check) {
   };
 }
 
-async function fetchStatus(id) {
+// Reads the subscription and checks its price. `knownPlanIds` skips the ensurePlans() lookup.
+async function fetchStatus(id, knownPlanIds) {
   return upstream(async () => {
-    const [subscription, planIds] = await Promise.all([getSubscription(id), ensurePlans()]);
+    const [subscription, planIds] = await Promise.all([getSubscription(id), knownPlanIds || ensurePlans()]);
     if (!subscription || typeof subscription !== 'object' || subscription.id !== id) {
       throw new Error('PayPal returned a different subscription.');
     }
@@ -155,17 +170,25 @@ module.exports = async (req, res) => {
         await paypalFetch(`/v1/billing/subscriptions/${encodeURIComponent(subscriptionId)}/${spec.path}`,
           { reason: spec.reason });
       } catch (err) {
-        if (!isStatusInvalid(err)) {
+        const notApproved = action === 'cancel' && state === 'APPROVAL_PENDING' && err.status === 404;
+        if (!isStatusInvalid(err) && !notApproved) {
           err.status = 502;
           throw err;
         }
-        // The state changed between our read and PayPal's check (or PayPal is stricter than we
-        // are). Re-read it for the right message; fall back to this action's refusal.
+        // PayPal refused for the subscription's state: it changed since our read, or PayPal is
+        // stricter than we are (it will not cancel an unapproved one). Re-read the state for the
+        // right message; fall back to the state we saw.
         let fresh = null;
         try { fresh = (await getSubscription(subscriptionId)).status; } catch (e) { /* keep fallback */ }
-        throw conflict(refusal(action, fresh) || spec.refusal, fresh || state);
+        throw conflict(paypalRefusal(action, fresh || state), fresh || state);
       }
-      current = await fetchStatus(subscriptionId);
+      try {
+        current = await fetchStatus(subscriptionId, current.planIds);
+      } catch (err) {
+        // PayPal has already made the change; don't report it as failed because the re-read did.
+        console.error('[paypal] re-read after', action, 'failed:', err.message, err.paypal || '');
+        current = { ...current, subscription: { ...current.subscription, status: spec.target } };
+      }
     }
 
     res.status(200).json(toStatus(current.subscription, current.planIds, current.check));

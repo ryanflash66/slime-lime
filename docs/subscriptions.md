@@ -264,8 +264,8 @@ Every successful call answers `200` with the subscription as it is now:
   `EXPIRED`.
 - `cadence` is the cadence whose `ensurePlans()` plan ID matches `plan_id`, or `null` for a plan
   that isn't ours.
-- `amount` is what PayPal bills each cycle: the `REGULAR` cycle's `fixed_price.value`, in USD.
-  `lastPayment` is `null` until PayPal takes a payment. `nextBillingTime` is `null` when PayPal
+- `amount` is what PayPal bills each cycle: the `REGULAR` cycle's `fixed_price.value`, in USD,
+  always with cents (`"21.60"`, though PayPal sends `"21.6"`). `lastPayment` is `null` until PayPal takes a payment. `nextBillingTime` is `null` when PayPal
   has none, for example before approval.
 - `pack` is `decodePackCode(custom_id)`, or `null` when `custom_id` is not a pack code.
 - `priceOk` is `verifyBilledAmount(subscription).ok`, checked against today's prices (see
@@ -285,7 +285,9 @@ shipping address, payer ID) or any other field is passed through.
 | `cancel` | `POST /v1/billing/subscriptions/{id}/cancel`   | `Cancelled by shopper via Slime Lime` | `APPROVAL_PENDING`, `APPROVED`, `ACTIVE`, `SUSPENDED` |
 
 PayPal answers these with `204` and no body. The endpoint then reads the subscription again and
-returns the fresh status object.
+returns the fresh status object. If that re-read fails, the change has still been made, so the
+answer is still `200`: the status object read before the action, with `status` set to the state
+the action leads to (`SUSPENDED`, `ACTIVE` or `CANCELLED`).
 
 The current state is checked before PayPal is called. A refused action is a `409`
 `{ "error": "…", "status": "<PayPal state>" }`:
@@ -297,6 +299,13 @@ The current state is checked before PayPal is called. A refused action is a `409
 If the state changes between that read and PayPal's own check, PayPal answers
 `422 UNPROCESSABLE_ENTITY` with issue `SUBSCRIPTION_STATUS_INVALID`. The endpoint re-reads the
 subscription and returns the same friendly `409` for its new state.
+
+PayPal will not cancel a subscription nobody has approved yet. The sandbox answers
+`404 RESOURCE_NOT_FOUND` / `INVALID_RESOURCE_ID` for it, although the subscription exists. Cancel on
+`APPROVAL_PENDING` is still sent to PayPal, in case PayPal allows it, but that refusal becomes a
+`409` with status `APPROVAL_PENDING`: "This subscription hasn't been approved in PayPal yet, so
+there's nothing to cancel. It won't bill unless it's approved." Such a subscription is never
+billed unless the buyer approves it.
 
 Any other PayPal or network failure, including a different 4xx, is a `502` with
 `paypal: { name, issue, debug_id }` when PayPal sent one, like the other subscription endpoints.
