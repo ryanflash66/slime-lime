@@ -138,8 +138,10 @@ function Concierge({ cart, fridgeOpen }) {
   msgsRef.current = msgs;
   const checkoutRef = useRefC(checkout);
   checkoutRef.current = checkout;
-  // Synchronous guard: two sends before React re-renders must not both go out.
+  // Synchronous guard: two sends before React re-renders must not both go out. An automatic
+  // message (the post-payment one) that arrives mid-request waits here and goes out next.
   const sendingRef = useRefC(false);
+  const queuedAutoRef = useRefC(null);
   // Keys the server's PayPal-Request-Id, so a retried checkout of the same pack reuses its order.
   // A new one starts after every payment.
   const sessionRef = useRefC(null);
@@ -209,7 +211,11 @@ function Concierge({ cart, fridgeOpen }) {
 
   async function send(text, { auto = false, pack = null } = {}) {
     const content = String(text || '').trim();
-    if (!content || sendingRef.current) return;
+    if (!content) return;
+    if (sendingRef.current) {
+      if (auto) queuedAutoRef.current = { text: content, pack };
+      return;
+    }
     sendingRef.current = true;
     const history = [...msgsRef.current.filter(m => !m.error), { role: 'user', content, auto }];
     setMsgs(history);
@@ -246,6 +252,9 @@ function Concierge({ cart, fridgeOpen }) {
       sendingRef.current = false;
       setThinking(false);
       ccEmit('thinking', { on: false });
+      const next = queuedAutoRef.current;
+      queuedAutoRef.current = null;
+      if (next) setTimeout(() => window.slConcierge && window.slConcierge.sendAuto(next.text, next.pack), 0);
     }
   }
 
@@ -254,6 +263,7 @@ function Concierge({ cart, fridgeOpen }) {
     open: () => setOpen(true),
     close: () => setOpen(false),
     send: text => { setOpen(true); return send(text); },
+    sendAuto: (text, pack) => send(text, { auto: true, pack }),
     pay: () => { const c = checkoutRef.current; if (c && !c.paid) pay.start(c.orderId, c.lines); },
   };
   useEffectC(() => { ccEmit(open ? 'open' : 'close'); }, [open]);

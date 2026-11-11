@@ -81,4 +81,4 @@ function badRequest(message) {
   return err;
 }
 
-module.exports = { FLAVOR_PRICES, CADENCES, unitCents, priceCart, centsToValue };
+module.exports = { FLAVOR_PRICES, CADENCES, MAX_QTY_PER_LINE, MAX_LINES, unitCents, priceCart, centsToValue };

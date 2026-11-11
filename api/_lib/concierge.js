@@ -21,13 +21,13 @@ const { generateText, tool } = require('ai');
 const { createOpenAI } = require('@ai-sdk/openai');
 const { createGoogleGenerativeAI } = require('@ai-sdk/google');
 const { z } = require('zod');
-const { FLAVOR_PRICES, priceCart, centsToValue } = require('./catalog');
-const { createOrder, paypalEnv } = require('./paypal');
+const { FLAVOR_PRICES, MAX_QTY_PER_LINE, MAX_LINES, priceCart, centsToValue } = require('./catalog');
+const { createOrder, getOrder, paypalEnv } = require('./paypal');
 
 const DEFAULT_MODEL = 'google/gemini-3-flash';      // AI Gateway model id
 const DEFAULT_GOOGLE_MODEL = 'gemini-2.5-flash';     // Gemini API model id
 const MAX_BOTTLES = 48;      // biggest pack the concierge builds or checks out
-const MAX_LINE_QTY = 96;     // catalog.js per-line limit; past Fridge orders can go this high
+const MAX_LINE_QTY = MAX_QTY_PER_LINE; // catalog.js per-line limit; past Fridge orders can go this high
 const MAX_TURNS = 16;
 const MAX_CHARS = 600;
 
@@ -100,10 +100,12 @@ function systemPrompt(currentPack, history, fridgeNote) {
 // Keeps only plain text turns from the browser, trimmed. Tool calls never come from the client.
 function cleanMessages(raw) {
   if (!Array.isArray(raw)) return [];
-  return raw
+  const turns = raw
     .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
-    .slice(-MAX_TURNS)
-    .map(m => ({ role: m.role, content: m.content.slice(0, MAX_CHARS) }));
+    .slice(-MAX_TURNS);
+  // Start the window on a user turn: Gemini rejects a conversation that opens with the model.
+  const first = turns.findIndex(m => m.role === 'user');
+  return (first < 0 ? [] : turns.slice(first)).map(m => ({ role: m.role, content: m.content.slice(0, MAX_CHARS) }));
 }
 
 const bottleCount = lines => lines.reduce((s, l) => s + l.qty, 0);
@@ -111,11 +113,12 @@ const bottleCount = lines => lines.reduce((s, l) => s + l.qty, 0);
 // One-time flavor lines, merged by flavor. Returns null if any line is invalid: quantities are
 // never silently trimmed, so what the server prices is exactly what the browser holds.
 function cleanLines(raw) {
-  if (!Array.isArray(raw) || raw.length > 20) return null;
+  if (!Array.isArray(raw) || raw.length > MAX_LINES) return null;
   const merged = {};
   for (const l of raw) {
     const qty = Number(l && l.qty);
-    if (!l || !FLAVOR_PRICES[l.id] || !Number.isInteger(qty) || qty < 1 || qty > MAX_LINE_QTY) return null;
+    if (!l || typeof l.id !== 'string' || !Object.prototype.hasOwnProperty.call(FLAVOR_PRICES, l.id)
+      || !Number.isInteger(qty) || qty < 1 || qty > MAX_LINE_QTY) return null;
     merged[l.id] = (merged[l.id] || 0) + qty;
   }
   const lines = Object.entries(merged).map(([id, qty]) => ({ id, qty }));
@@ -263,10 +266,17 @@ async function runConcierge(req, body, opts = {}) {
 
   // The model can call several tools in one step and the SDK runs them concurrently. Queue them
   // so each one sees the pack the previous one left, in the order the model asked for them.
+  // A tool that throws (PayPal down, bad pack) would end the whole turn in the AI SDK, so
+  // failures go back to the model as { error } and it can tell the shopper.
   let queue = Promise.resolve();
-  const serial = fn => (...args) => {
-    const run = queue.then(() => fn(...args));
-    queue = run.catch(() => {});
+  const serial = (name, fn) => (...args) => {
+    const run = queue.then(() => fn(...args)).catch(e => {
+      console.error(`[concierge] ${name} failed:`, e && e.message, (e && e.paypal) || '');
+      return { error: name === 'start_checkout'
+        ? 'PayPal could not create the order right now. Ask them to try again in a moment.'
+        : 'That did not work. Try a different pack.' };
+    });
+    queue = run;
     return run;
   };
   const setPack = lines => {
@@ -287,7 +297,7 @@ async function runConcierge(req, body, opts = {}) {
       parameters: z.object({
         items: z.array(lineSchema).min(1).max(6).describe('One entry per flavor.'),
       }),
-      execute: serial(async ({ items }) => {
+      execute: serial('build_pack', async ({ items }) => {
         const lines = cleanLines(items.map(i => ({ id: i.flavorId, qty: i.qty })));
         if (!lines || !lines.length) return { error: 'That pack has an unknown flavor or quantity.' };
         if (bottleCount(lines) > MAX_BOTTLES) return { error: `Packs top out at ${MAX_BOTTLES} bottles. Pick fewer.` };
@@ -301,7 +311,7 @@ async function runConcierge(req, body, opts = {}) {
       parameters: z.object({
         orderId: z.string().optional().describe('A past order id from the history. Omit for the newest.'),
       }),
-      execute: serial(async ({ orderId }) => {
+      execute: serial('reorder_usual', async ({ orderId }) => {
         if (!history.length) return { error: 'No past orders on this device. Build a new pack instead.' };
         const past = orderId ? history.find(h => h.orderId === orderId) : history[0];
         if (!past) return { error: `Order ${orderId} is not in this device's history. Ask which past order they mean.` };
@@ -322,7 +332,7 @@ async function runConcierge(req, body, opts = {}) {
     start_checkout: tool({
       description: `Create the PayPal ${env === 'live' ? '' : 'sandbox '}order for the current pack. Call only after the shopper agrees to buy. Returns the order id and total.`,
       parameters: z.object({}),
-      execute: serial(async () => {
+      execute: serial('start_checkout', async () => {
         if (!pack.length) return { error: 'There is no pack yet. Call build_pack first.' };
         const lines = pack.map(l => ({ ...l }));
         const version = packVersion;
@@ -337,36 +347,41 @@ async function runConcierge(req, body, opts = {}) {
   };
 
   // get_order from PayPal Agent Toolkit, wrapped so payer details stay out of the model's context.
+  // If the toolkit fails to load, the same lookup goes straight to the Orders API.
+  let tk = null;
   try {
-    const tk = paypalToolkitTools();
-    if (tk.get_order) {
-      tools.get_order = tool({
-        description: `${String(tk.get_order.description || '').trim()}\nOnly orders from this device's order history, or a checkout you just created, can be looked up.`,
-        parameters: z.object({ id: z.string().describe('The PayPal order id.') }),
-        execute: async ({ id }, opts) => {
-          const orderId = String(id || '').trim().toUpperCase();
-          if (!allowedOrders.has(orderId)) {
-            return { error: 'That order is not in this device\'s order history, so it cannot be looked up here.' };
-          }
-          try { return summarizeOrder(await tk.get_order.execute({ id: orderId }, opts)); }
-          catch (e) { return { error: 'Could not look that order up right now.' }; }
-        },
-      });
-    }
+    tk = paypalToolkitTools().get_order || null;
   } catch (e) {
     console.error('[concierge] PayPal Agent Toolkit unavailable:', e.message);
   }
+  tools.get_order = tool({
+    description: `${String((tk && tk.description) || 'Retrieves the order details from PayPal for a given order ID.').trim()}\nOnly orders from this device's order history, or a checkout you just created, can be looked up.`,
+    parameters: z.object({ id: z.string().describe('The PayPal order id.') }),
+    execute: async ({ id }, opts) => {
+      const orderId = String(id || '').trim().toUpperCase();
+      if (!allowedOrders.has(orderId)) {
+        return { error: 'That order is not in this device\'s order history, so it cannot be looked up here.' };
+      }
+      try { return summarizeOrder(tk ? await tk.execute({ id: orderId }, opts) : await getOrder(orderId)); }
+      catch (e) { return { error: 'Could not look that order up right now.' }; }
+    },
+  });
 
   let result;
   try {
+    const model = opts.model || gatewayModel(req);
     result = await generateText({
-    model: opts.model || gatewayModel(req),
+    model,
     system: systemPrompt(pack, history, fridgeNote),
     messages,
     tools,
     maxSteps: 5,
-    maxTokens: 700,
+    maxTokens: 1000,
     temperature: 0.6,
+    // Gemini 2.5+ counts thinking tokens against maxTokens; keep thinking small so replies fit.
+    providerOptions: /gemini-(2\.5|[3-9])/.test(String(model.modelId || ''))
+      ? { google: { thinkingConfig: { thinkingBudget: 256 } } }
+      : undefined,
     });
   } catch (e) {
     throw providerError(e);

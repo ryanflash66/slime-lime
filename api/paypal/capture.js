@@ -1,8 +1,9 @@
 // POST /api/paypal/capture
 // Body: { orderId }
 // Captures an order the buyer approved in the PayPal popup.
-// A retry after a lost response finds the order already captured; that is reported as the
-// original successful capture instead of an error, so the browser can still record the order.
+// A retry after a lost response (or one racing the first capture) gets a 4xx from PayPal; if the
+// order is in fact COMPLETED, that is reported as the successful capture instead of an error, so
+// the browser can still record the order. That path leaves out the payer's name.
 const { captureOrder, getOrder, sendError, readJson } = require('../_lib/paypal');
 
 const ORDER_ID_RE = /^[A-Z0-9]{8,32}$/;
@@ -26,14 +27,16 @@ module.exports = async (req, res) => {
     if (typeof orderId !== 'string' || !ORDER_ID_RE.test(orderId)) {
       return res.status(400).json({ error: 'Invalid order id.' });
     }
-    let data;
+    let out;
     try {
-      data = await captureOrder(orderId);
+      out = receipt(await captureOrder(orderId));
     } catch (err) {
-      if (!(err.paypal && err.paypal.issue === 'ORDER_ALREADY_CAPTURED')) throw err;
-      data = await getOrder(orderId);
+      if (!(err.status === 409 || err.status === 422)) throw err;
+      const current = await getOrder(orderId).catch(() => null);
+      if (!current || current.status !== 'COMPLETED') throw err;
+      out = { ...receipt(current), payer: null };
     }
-    res.status(200).json(receipt(data));
+    res.status(200).json(out);
   } catch (err) {
     sendError(res, err);
   }

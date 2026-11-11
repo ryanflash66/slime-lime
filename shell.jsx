@@ -242,7 +242,9 @@ function useShellPayPal({ active, items, onPaid }) {
             const lines = pending && (!pending.orderId || pending.orderId === r.orderId) ? pending.lines : [];
             pendingRef.current = null;
             setState(s => ({ ...s, status: 'paid', receipt: r, message: '' }));
-            if (onPaidRef.current) onPaidRef.current(r, lines);
+            // Outside the capture error path: the money moved, whatever the bookkeeping does.
+            try { if (onPaidRef.current) onPaidRef.current(r, lines); }
+            catch (err) { console.error('[paypal] after-payment step failed:', err); }
           } catch (e) {
             setState(s => ({ ...s, status: 'error', message: e.message || 'Payment could not be captured' }));
           }
