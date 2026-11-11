@@ -1,4 +1,4 @@
-// Thin PayPal REST client (Orders v2) for Vercel serverless functions.
+// Thin PayPal REST client (Orders v2, Catalog Products, Billing Plans) for Vercel serverless functions.
 // Credentials come only from Vercel environment variables, never from code:
 //   PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, and optional PAYPAL_ENV ("sandbox" default, or "live").
 
@@ -46,20 +46,32 @@ async function getAccessToken() {
   return cached.token;
 }
 
-async function paypalFetch(path, body) {
+// POST to PayPal. Pass a stable `requestId` to make the call idempotent across instances
+// (PayPal returns the original result for a replayed PayPal-Request-Id instead of acting twice);
+// by default every call gets a fresh one.
+async function paypalFetch(path, body, requestId) {
+  return paypalRequest('POST', path, body, requestId || crypto.randomUUID());
+}
+
+async function paypalGet(path) {
+  return paypalRequest('GET', path);
+}
+
+async function paypalRequest(method, path, body, requestId) {
   const token = await getAccessToken();
+  const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+  if (method !== 'GET') {
+    headers['Content-Type'] = 'application/json';
+    headers['PayPal-Request-Id'] = requestId;
+  }
   const res = await fetch(`${apiBase()}${path}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      // Unique per call; PayPal uses it to dedupe if the same request is replayed.
-      'PayPal-Request-Id': crypto.randomUUID(),
-    },
+    method,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+  // Some calls (e.g. plan activate) answer 204 with no body.
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw upstreamError(`PayPal request failed (${path}).`, res.status, data);
+  if (!res.ok) throw upstreamError(`PayPal request failed (${method} ${path.split('?')[0]}).`, res.status, data);
   return data;
 }
 
@@ -105,4 +117,4 @@ function readJson(req) {
   return {};
 }
 
-module.exports = { paypalEnv, createOrder, captureOrder, sendError, readJson };
+module.exports = { paypalEnv, paypalFetch, paypalGet, createOrder, captureOrder, sendError, readJson };
