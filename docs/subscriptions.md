@@ -96,9 +96,15 @@ Request:
 ```json
 {
   "lines": [{ "id": "lemon-lime", "qty": 6 }, { "id": "cherry", "qty": 4 }, { "id": "mango", "qty": 2 }],
-  "cadence": "monthly"
+  "cadence": "monthly",
+  "attemptId": "a1b2c3d4"
 }
 ```
+
+`attemptId` is optional: a client-generated ID (8 to 64 of `A-Z a-z 0-9 - _`) for one checkout
+attempt. The server hashes it with the cadence and the priced pack into the `PayPal-Request-Id`,
+so a retry of the same attempt gets the same subscription back instead of a second one, while the
+same attemptId with a different pack still creates a new one.
 
 `id` is a plain flavor id. The server adds the `--sub` suffix itself, so a subscription costs
 exactly what the same `--sub` lines cost in the cart: `priceSubscription(lines, cadence)` in

@@ -10,11 +10,16 @@ const { priceSubscription, decodePackCode } = require('./catalog');
 const { paypalFetch, paypalGet } = require('./paypal');
 const { ensurePlans } = require('./plans');
 
-// Creates a subscription on `planId` at `total` (a "12.34" string) per billing cycle.
+// Creates a subscription on `planId` for `priced`, the result of priceSubscription(), so the
+// billed total and the recorded pack code always come from the same pricing call.
 // The inline price override is mandatory: without it PayPal bills the plan's placeholder price.
-async function createSubscription({ planId, total, packCode }) {
+// `requestId` (optional) makes the create idempotent: PayPal replays the first result for the
+// same PayPal-Request-Id instead of creating a second subscription on a retry.
+async function createSubscription({ planId, priced, requestId }) {
+  const total = priced && priced.total;
+  const packCode = priced && priced.packCode;
   if (!planId || !/^\d+\.\d{2}$/.test(String(total)) || !packCode) {
-    throw new Error('createSubscription needs a plan ID, a total and a pack code.');
+    throw new Error('createSubscription needs a plan ID and a priceSubscription() result.');
   }
   return paypalFetch('/v1/billing/subscriptions', {
     plan_id: planId,
@@ -30,7 +35,7 @@ async function createSubscription({ planId, total, packCode }) {
       shipping_preference: 'NO_SHIPPING',
       user_action: 'SUBSCRIBE_NOW',
     },
-  });
+  }, requestId);
 }
 
 // GET /v1/billing/subscriptions/{id}?fields=plan. `fields=plan` makes PayPal include the
