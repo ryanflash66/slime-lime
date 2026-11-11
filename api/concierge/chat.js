@@ -1,7 +1,10 @@
 // POST /api/concierge/chat
 // Body: { messages: [{ role, content }], pack?: [{ id, qty }], history?, session?,
 //         subscriptions?: [{ subscriptionId, sig, cadence, lines, at, approved }], cadence?,
-//         confirm?: { action, subscriptionId }, pending?: { action, subscriptionId, issuedAt, token } }
+//         confirm?: { action, subscriptionId }, pending?: { action, subscriptionId, issuedAt, token },
+//         onScreen?: { checkout: bool, subscription: bool } }
+//   onScreen: whether an earlier reply's PayPal Pay / Subscribe button is still in the chat, unpaid
+//   or unapproved. It only shapes the reply's wording (DAR-708); it unlocks nothing.
 //   history: this browser's sl-orders, newest first:
 //     { kind: 'order', orderId, lines, at } or { kind: 'subscription', subscriptionId, sig, cadence, lines, at }.
 //   A subscription's sig is verified and dropped server-side (_lib/concierge-subs.js); never log the body.
@@ -62,9 +65,9 @@ module.exports = async (req, res) => {
   if ((Array.isArray(pack) && pack.length > MAX_PACK_LINES) || (Array.isArray(history) && history.length > MAX_HISTORY)) {
     return res.status(400).json({ error: 'That cart or order history is too big for the concierge.' });
   }
-  const { subscriptions, confirm, pending, cadence } = body;
+  const { subscriptions, confirm, pending, cadence, onScreen } = body;
   if ((subscriptions != null && (!Array.isArray(subscriptions) || subscriptions.length > MAX_SUBSCRIPTIONS))
-    || !smallObject(confirm) || !smallObject(pending)
+    || !smallObject(confirm) || !smallObject(pending) || !smallObject(onScreen)
     || (cadence != null && (typeof cadence !== 'string' || cadence.length > 20))) {
     return res.status(400).json({ error: 'That subscription request is too big for the concierge.' });
   }

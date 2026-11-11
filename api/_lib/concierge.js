@@ -115,20 +115,23 @@ function systemPrompt(currentPack, history, fridgeNote, openCheckout, subs = [])
     lineupText(),
     '',
     'Your job, in order:',
-    '1. Learn how the shopper plays and what they like to taste. Ask at most one short question if you truly need it; otherwise pick.',
+    '1. Learn how the shopper plays and what they like to taste. Ask at most one short question if you truly need it; otherwise pick. Never ask which pack they mean: there is only ever the current pack.',
     `2. Call build_pack with a pack that fits them. Default to 12 bottles unless they ask for another size (6, 12 or 24 are common; max ${MAX_BOTTLES}). Mix 2 to 4 flavors unless they want one. The pack goes straight into their Fridge cart.`,
     '3. In one or two sentences, say why the pack fits them, using the total the tool returned. Then ask if they want to check out.',
-    '4. When they say yes (or ask to buy, pay or check out), call start_checkout, then tell them to press the PayPal button below the chat to approve.',
+    '4. When they say yes (or ask to buy, pay or check out), call start_checkout, then give the total and tell them to tap the PayPal button below to approve.',
     '5. If they tell you they paid, call get_order with that order id and confirm the status in one line.',
     '6. If they ask for "my usual", "the same as last time" or a reorder, call reorder_usual (no arguments unless they name a past order).',
     '   - If it returns hasSubscription: true, it built nothing. Do not start a checkout and never set up a second subscription. Say the returned "say" line, e.g. "Your pack already comes every month. Want an extra one-time pack of it?"',
-    '   - If they then say yes to the extra pack, call reorder_usual with extraPack: true, then start_checkout, then give the total and tell them to press the PayPal button below the chat.',
-    '   - If it returns a rebuilt pack instead, the shopper already asked to buy it: call start_checkout right away in the same turn, then say what is in it with the returned total and tell them to press the PayPal button below the chat.',
+    '   - If they then say yes to the extra pack, call reorder_usual with extraPack: true, then start_checkout, then give the total and tell them to tap the PayPal button below.',
+    '   - If it returns a rebuilt pack instead, the shopper already asked to buy it: call start_checkout right away in the same turn, then say what is in it with the returned total and tell them to tap the PayPal button below.',
     '7. If they ask where their order is, what they got, or how their subscription is doing, call get_order with no id: it returns the newest order on this device and the subscription status. Answer in one or two lines from what it returns (status, items, amount, next delivery date).',
     '',
     'Rules:',
     '- Never state a price, total or discount that a tool did not return. Never invent flavors.',
     '- If they want changes, call build_pack again with the full new pack.',
+    '- A PayPal button is in the chat only when start_checkout or start_subscription succeeds in this same turn (it shows right below your reply), or when "Still on screen" below lists one from an earlier reply (it is above). Only then tell them to tap the PayPal button. Otherwise never mention a PayPal button: there is none on screen.',
+    '- Never say order or subscription ids (long PayPal codes like 28V08527F6696931Y or I-UPBBBAR84XFR); the card on screen shows them. Say "your order" or "your subscription". Give an id only if they ask for it.',
+    '- Say PayPal states in plain words ("not paid yet", "waiting for your approval in PayPal", "active", "paused"), never as codes like CREATED or APPROVAL_PENDING.',
     '- Earlier turns show only the text of your replies, not the tool calls behind them. Those tools did run, so trust your earlier replies and the pack and orders listed below. Never say you did not build a pack or start a checkout.',
     moneyRule(),
     '- No health or medical advice beyond the label facts above. Caffeine: suggest they check with a doctor if they are sensitive, under 18 or pregnant.',
@@ -142,7 +145,7 @@ function systemPrompt(currentPack, history, fridgeNote, openCheckout, subs = [])
       : (fridgeNote || 'Their Fridge has no concierge pack yet.'),
     // Set only when a model attempt already opened the order this turn and a fallback finishes it.
     openCheckout
-      ? `A PayPal order (${openCheckout.orderId}, $${openCheckout.total}) is already open for this pack. Do not start another checkout unless the pack changes; tell them to press the PayPal button below the chat to approve.`
+      ? `A PayPal order (${openCheckout.orderId}, $${openCheckout.total}) is already open for this pack. Do not start another checkout unless the pack changes; tell them to tap the PayPal button below to approve.`
       : '',
   ].join('\n').trim();
 }
@@ -239,6 +242,28 @@ function checkConfirm(confirm, pending, subs, lastUserText, now = Date.now()) {
   return { entry, action };
 }
 
+// PayPal status codes in plain words, so the model (and the voice reading its reply) never says
+// "CREATED" or "APPROVAL_PENDING" (DAR-713).
+const SUB_STATUS_WORDS = {
+  APPROVAL_PENDING: 'waiting for approval in PayPal',
+  APPROVED: 'approved, starting up',
+  ACTIVE: 'active',
+  SUSPENDED: 'paused',
+  CANCELLED: 'cancelled',
+  EXPIRED: 'ended',
+};
+const ORDER_STATUS_WORDS = {
+  CREATED: 'not paid yet',
+  SAVED: 'not paid yet',
+  PAYER_ACTION_REQUIRED: 'not paid yet (waiting for the shopper in PayPal)',
+  APPROVED: 'approved in PayPal, payment not taken yet',
+  VOIDED: 'voided, never paid',
+  COMPLETED: 'paid',
+};
+const CAPTURE_STATUS_WORDS = { COMPLETED: 'paid', PENDING: 'payment pending', DECLINED: 'declined',
+  REFUNDED: 'refunded', PARTIALLY_REFUNDED: 'partly refunded', FAILED: 'failed' };
+const plainStatus = (words, code) => (code ? words[code] || String(code).toLowerCase().replace(/_/g, ' ') : code);
+
 // The status object from manageSubscription, worded for the model (no payer data exists in it).
 function statusView(st) {
   const pack = Array.isArray(st.pack) ? st.pack.filter(l => FLAVOR_PRICES[l.id]) : [];
@@ -252,7 +277,7 @@ function statusView(st) {
   };
   return {
     subscriptionId: st.id,
-    status: st.status,
+    status: plainStatus(SUB_STATUS_WORDS, st.status),
     meaning: notes[st.status] || undefined,
     cadence: st.cadence || undefined,
     every: st.cadence ? everyText(st.cadence) : undefined,
@@ -272,10 +297,15 @@ function manageErrorText(e) {
   return 'PayPal could not be reached just now. Nothing was changed. Ask them to try again in a moment.';
 }
 
+// Read back (and spoken) before a change. No subscription id: the Confirm card shows it.
+const subName = s => {
+  const about = [s.lines && s.lines.length ? linesText(s.lines) : '', s.cadence ? everyText(s.cadence) : ''].filter(Boolean).join(', ');
+  return `your subscription${about ? ` (${about})` : ''}`;
+};
 const PENDING_SUMMARY = {
-  pause: (s) => `This pauses subscription ${s.subscriptionId}${s.cadence ? ` (${everyText(s.cadence)})` : ''}. PayPal stops billing and deliveries stop until you resume it.`,
-  resume: (s) => `This resumes subscription ${s.subscriptionId}. PayPal starts billing ${s.cadence ? everyText(s.cadence) : 'each cycle'} again.`,
-  cancel: (s) => `This cancels subscription ${s.subscriptionId} for good. No more charges or deliveries; restarting means approving a new subscription in PayPal.`,
+  pause: (s) => `This pauses ${subName(s)}. PayPal stops billing and deliveries stop until you resume it.`,
+  resume: (s) => `This resumes ${subName(s)}. PayPal starts billing ${s.cadence ? everyText(s.cadence) : 'each cycle'} again.`,
+  cancel: (s) => `This cancels ${subName(s)} for good. No more charges or deliveries; restarting means approving a new subscription in PayPal.`,
 };
 
 // What a subscription tool that throws tells the model (the serial() wrapper's fallback).
@@ -292,18 +322,18 @@ const SUB_TOOL_ERRORS = {
 // The full rules ride along only when subscriptions are in play (or the shopper mentions one), so
 // plain flavor chats don't pay for them on every turn.
 const SUB_TALK_RE = /subscri|recurring|repeat|monthly|weekly|quarterly|cadence|every\s+(2|two|3|three|month|week)|pause|resume|cancel|confirm/i;
-function subscriptionPrompt({ subs, listed, cadence, pack, subscription, pendingAction, confirmed, lastUserText }) {
+function subscriptionPrompt({ subs, listed, cadence, pack, subscription, pendingAction, confirmed, lastUserText, subButtonShown = false }) {
   if (!subs.length && !cadence && !subscription && !pendingAction && !confirmed && !SUB_TALK_RE.test(String(lastUserText || ''))) {
     return 'Subscriptions: if they want the pack on repeat (monthly and so on), call set_cadence. Never use start_checkout for a subscription.';
   }
   const lines = [
     'Subscriptions (recurring delivery, billed by PayPal, pause or cancel anytime):',
-    `- If they want the pack on repeat ("make it monthly", "subscribe"), call set_cadence with biweekly, monthly or quarterly (ask which if they did not say). Never use start_checkout for a subscription.`,
-    '- Read back the items, the cadence and the per-delivery total set_cadence returned, and say "Tap the PayPal button to approve." Approval always happens in PayPal\'s window, never in chat, so their PayPal click is the confirmation.',
-    '- If their message already asks to start, subscribe or set it up ("make it monthly and start my subscription"), do not ask again: call set_cadence (and build_pack first if needed), then start_subscription, in this same turn, then give the read-back. Otherwise read back after set_cadence and call start_subscription when they say yes.',
+    `- If they name a cadence for the pack ("make it monthly", "every two weeks"), call set_cadence right away with biweekly, monthly or quarterly. It always applies to the current pack in their Fridge: never ask which pack. If there is no pack yet, call build_pack first. Ask which cadence only if they want a subscription but named none. Never use start_checkout for a subscription.`,
+    '- After set_cadence alone, read back the items, the cadence and the per-delivery total it returned, then ask: "Want me to start the subscription?" Do not mention a PayPal button: none exists until start_subscription runs.',
+    '- If their message asks to start, subscribe or set it up ("start my subscription", "make it monthly and start it"), or they say yes to starting, do not ask again: call set_cadence if needed (and build_pack first if needed), then start_subscription, in this same turn. Then say it is ready to approve, never that it is set up or active: "Your subscription is ready to approve: <items>, <total> per delivery, <cadence>. Tap the PayPal button to approve." Approval always happens in PayPal\'s window, never in chat, so their PayPal click is the confirmation.',
     '- "What\'s my subscription?": call subscription_status (it picks their approved one unless they name one) and give status, cadence, amount per delivery, next billing date and pack in one or two lines.',
     '- Pause, resume or cancel: call pause_subscription, resume_subscription or cancel_subscription. These change nothing yet. Read back the summary the tool returned (what will change), then end with exactly: Say \'confirm\' to go ahead.',
-    '- Never say a subscription was paused, resumed, cancelled or changed unless "Confirmed change" below says it succeeded. If a tool or result returns an error, tell them that message plainly.',
+    '- Never say a subscription was paused, resumed, cancelled or changed unless "Confirmed change" below says it succeeded. If a tool or result returns an error, tell them that message plainly, and mention a PayPal button only if "Still on screen" lists one. If it failed because the subscription was never approved in PayPal, say so; with no Subscribe button on screen, offer to start a new one.',
     '- Prices and savings in your earlier replies came from tools that ran then. Never retract or second-guess them.',
     '- Changing the size, flavors or cadence of an existing subscription is not possible in place: it means cancelling it and starting a new subscription that they approve in PayPal again. Say so before offering it. If they want it: build_pack and set_cadence for the new pack, then cancel_subscription (they confirm), and only after a confirmed cancel call start_subscription.',
     '',
@@ -314,7 +344,7 @@ function subscriptionPrompt({ subs, listed, cadence, pack, subscription, pending
   ];
   // Set when a model attempt already did this earlier in the turn and a fallback finishes it.
   if (subscription) {
-    lines.push(`A PayPal subscription (${subscription.subscriptionId}, $${subscription.total} ${everyText(subscription.cadence)}) is already created for this pack. Do not start another unless the pack or cadence changes; tell them to tap the PayPal button to approve.`);
+    lines.push(`A PayPal subscription (${subscription.subscriptionId}, $${subscription.total} ${everyText(subscription.cadence)}) is already created for this pack and ready to approve. Do not start another unless the pack or cadence changes; tell them it is ready to approve and to tap the PayPal button to approve.`);
   }
   if (pendingAction) {
     lines.push(`You already asked them to confirm: ${pendingAction.action} ${pendingAction.subscriptionId}. Read it back and say: Say 'confirm' to go ahead.`);
@@ -323,7 +353,7 @@ function subscriptionPrompt({ subs, listed, cadence, pack, subscription, pending
     lines.push(confirmed.ok
       ? `Confirmed change: they confirmed "${confirmed.action}" for ${confirmed.subscriptionId} and PayPal did it. New state: ${JSON.stringify(confirmed.result)}. Tell them in one line.`
       : confirmed.ran
-        ? `Confirmed change: they confirmed "${confirmed.action}" for ${confirmed.subscriptionId}, but it did not go through as asked. PayPal's answer: ${confirmed.error} Tell them that plainly; do not say it worked.`
+        ? `Confirmed change: they confirmed "${confirmed.action}" for ${confirmed.subscriptionId}, but it did not go through as asked. PayPal's answer: ${confirmed.error} Tell them that plainly; do not say it worked${subButtonShown ? '' : ', and do not mention a PayPal button (there is none on screen)'}.`
         : `They said confirm, but nothing ran: ${confirmed.error} Tell them and offer to ask again.`);
   }
   return lines.join('\n');
@@ -334,7 +364,84 @@ function confirmedReply(confirmed) {
   if (!confirmed || !confirmed.ran) return null;
   if (!confirmed.ok) return confirmed.error;
   const st = confirmed.result && confirmed.result.status;
-  return `Done. Subscription ${confirmed.subscriptionId} is now ${String(st || 'updated').toLowerCase().replace(/_/g, ' ')}.`;
+  return `Done. Your subscription is now ${st || 'updated'}.`;
+}
+
+// ---- reply guard (DAR-708, DAR-713) -------------------------------------------------------------
+// The prompt asks for all of this already; these cheap checks keep it true when the model slips.
+
+// A sentence that sends the shopper to a PayPal button ("Tap the PayPal button to approve.",
+// "Press the button below to pay."). Lines about the Fridge's buttons, the Confirm card or the
+// mic are left alone.
+// An imperative tap aimed at PayPal itself ("Tap PayPal to approve", "click the PayPal one"),
+// not any sentence with a tap verb and "PayPal" ("hit me up when you want to pay with PayPal",
+// "you tapped through PayPal, so it's paid").
+const TAP_PAYPAL_RE = /\b(tap|click|press)\s+(?:on\s+)?(?:the\s+)?(?:yellow\s+)?paypal\b/i;
+function sendsToPayPalButton(sentence) {
+  if (/\b(fridge|confirm|keep it|mic|microphone)\b/i.test(sentence)) return false;
+  if (/\bpaypal\b[^.!?]{0,20}\bbutton\b/i.test(sentence)) return true;
+  if (TAP_PAYPAL_RE.test(sentence)) return true;
+  return /\b(tap|click|press|hit|push)\b[^.!?]{0,30}\bbutton\b/i.test(sentence)
+    && /\b(pay|approve|approval|subscribe|checkout|check out)\b/i.test(sentence);
+}
+// Sentences with the space before them, so dropping one leaves the rest intact. A "." inside a
+// price ($21.60) is not an end: an end is followed by a space or the end of the text.
+const sentencesOf = text => (text.match(/[\s\S]*?(?:[.!?]+["')\]]*(?=\s|$)|\n|$)/g) || []).filter(Boolean);
+
+// PayPal order ids (17 characters, letters and digits) and subscription ids (I-...).
+const PAYPAL_ID = '(?:I-[A-Z0-9]{10,}|(?=[A-Z0-9]*\\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{12,})';
+const ID_AFTER_NOUN_RE = new RegExp(`\\b([Ss]ubscription|[Oo]rder)(?:\\s+(?:number|id|ID))?(?:,?\\s+|:\\s*|\\s*#)${PAYPAL_ID}\\b`, 'g');
+const ID_IN_PARENS_RE = new RegExp(`\\s*\\(\\s*${PAYPAL_ID}\\s*\\)`, 'g');
+// "(order 28V08527F6696931Y)" / "(subscription I-...)": drop the whole aside.
+const NOUN_ID_IN_PARENS_RE = new RegExp(`\\s*\\(\\s*(?:[Ss]ubscription|[Oo]rder)(?:\\s+(?:number|id|ID))?(?:,?\\s+|:\\s*|\\s*#)${PAYPAL_ID}\\s*\\)`, 'g');
+const ID_ALONE_RE = new RegExp(`\\b${PAYPAL_ID}\\b`, 'g');
+// The shopper asked for the id itself ("what's my order id?", "order number?"): keep it.
+const ASKS_FOR_ID_RE = /\b(ids?|order\s+(number|#|code)|subscription\s+(number|#|code)|reference|confirmation\s+(number|code))\b|\border\s*#/i;
+// "order 28V08527F6696931Y" -> "order"; "(I-UPBBBAR84XFR)" -> ""; a bare id -> "your order" /
+// "your subscription" ("Your ..." at the start of a sentence).
+function dropIds(text) {
+  return text
+    .replace(NOUN_ID_IN_PARENS_RE, '')
+    .replace(ID_AFTER_NOUN_RE, '$1')
+    .replace(ID_IN_PARENS_RE, '')
+    .replace(ID_ALONE_RE, (id, at, all) => {
+      const words = id.startsWith('I-') ? 'your subscription' : 'your order';
+      return /(^|[.!?]\s+|\n\s*)$/.test(all.slice(0, at)) ? words[0].toUpperCase() + words.slice(1) : words;
+    });
+}
+// A subscription created this turn waits for PayPal approval: it is not set up or active yet.
+const SET_UP_RES = [
+  [/\b(subscription|it)\s+(is|has been)\s+(now\s+)?(all\s+)?(set\s+up|active|started|live)\b/gi, '$1 is ready to approve'],
+  [/\b(subscription|it)'s\s+(now\s+)?(all\s+)?(set\s+up|active|started|live)\b/gi, '$1 is ready to approve'],
+  [/\bI(?:'ve| have)\s+(?:set\s+up|started)\s+your\b/gi, "I've lined up your"],
+];
+
+// opts.button: a PayPal button is in the chat (start_checkout or start_subscription succeeded
+// this turn, or an earlier one is still waiting). opts.subscriptionStarted: a subscription was
+// created this turn (it waits for PayPal approval). opts.offerStart: a cadence is set for the pack
+// but nothing started, so a dropped button line becomes the "start it?" question. opts.emptyLine:
+// the reply when every sentence was a dropped button line.
+function tidyReply(text, { button = false, subscriptionStarted = false, offerStart = false, emptyLine = '', lastUserText = '' } = {}) {
+  let out = String(text || '').trim();
+  if (!out) return '';
+  let dropped = false;
+  if (!button) {
+    const kept = sentencesOf(out).filter(s => {
+      const drop = sendsToPayPalButton(s);
+      dropped = dropped || drop;
+      return !drop;
+    });
+    out = kept.join('').trim();
+  }
+  // The PayPal button sits inside the chat, under the reply.
+  out = out.replace(/\b(below|under(neath)?|beneath)\s+the\s+chat\b/gi, 'below');
+  // Nothing is set up until PayPal approves it.
+  if (subscriptionStarted) for (const [re, to] of SET_UP_RES) out = out.replace(re, to);
+  if (!ASKS_FOR_ID_RE.test(String(lastUserText || ''))) out = dropIds(out);
+  out = out.replace(/[ \t]+([,.!?;:])/g, '$1').replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  if (dropped && !out) return emptyLine;
+  if (dropped && offerStart && !/\?\s*$/.test(out)) out = `${out} Want me to start the subscription?`;
+  return out;
 }
 
 // Keeps only plain text turns from the browser, trimmed. Tool calls never come from the client.
@@ -449,11 +556,11 @@ function summarizeOrder(raw) {
   const capture = pu.payments && pu.payments.captures && pu.payments.captures[0];
   return {
     id: o.id,
-    status: o.status,
+    status: plainStatus(ORDER_STATUS_WORDS, o.status),
     amount: pu.amount && pu.amount.value,
     currency: pu.amount && pu.amount.currency_code,
     items: (pu.items || []).map(i => `${i.quantity} x ${i.name}`),
-    captureStatus: capture && capture.status,
+    captureStatus: capture ? plainStatus(CAPTURE_STATUS_WORDS, capture.status) : undefined,
   };
 }
 
@@ -478,12 +585,12 @@ function summarizeSubscription(sub, live) {
   if (!live) {
     return {
       id: sub.subscriptionId, status: 'unknown', delivered: cadenceLabel(sub.cadence) || undefined, items: itemText(lines),
-      note: 'PayPal could not be reached just now. The subscription is set up on this device.',
+      note: 'PayPal could not be reached just now, so this is what this device has on record.',
     };
   }
   return {
     id: live.id,
-    status: live.status,
+    status: plainStatus(SUB_STATUS_WORDS, live.status),
     delivered: cadenceLabel(live.cadence) || cadenceLabel(sub.cadence) || undefined,
     items: itemText(lines),
     perDelivery: live.amount ? `$${live.amount}` : undefined,
@@ -651,7 +758,19 @@ async function runConcierge(req, body, opts = {}) {
   let cadence = CADENCE_IDS.includes(body.cadence) ? body.cadence : null;
   let subscription = null;   // created this turn: { subscriptionId, sig, total, cadence, lines, env }
   let pendingAction = null;  // proposed this turn: { action, subscriptionId, summary }
-  let confirmed = null;      // { action, subscriptionId, ran, ok, result?, error? }
+  let confirmed = null;      // { action, subscriptionId, ran, ok, result?, code?, error? }
+  // PayPal buttons from an earlier reply still in the chat (the browser says so; wording only).
+  // A new pack this turn makes the browser drop them.
+  const onScreen = body.onScreen && typeof body.onScreen === 'object' ? body.onScreen : {};
+  const earlierButtons = () => (packChanged ? { checkout: false, subscription: false }
+    : { checkout: onScreen.checkout === true, subscription: onScreen.subscription === true });
+  const stillOnScreenText = () => {
+    const b = earlierButtons();
+    return [
+      b.checkout ? 'Still on screen: the PayPal Pay button for their open order, from an earlier reply, not paid yet. If they ask how to pay, tell them to tap the PayPal button above.' : '',
+      b.subscription ? 'Still on screen: the PayPal Subscribe button for the subscription you started earlier, not approved yet. If they ask how to approve it, tell them to tap the PayPal button above.' : '',
+    ].filter(Boolean).join('\n');
+  };
 
   // The model can call several tools in one step and the SDK runs them concurrently. Queue them
   // so each one sees the pack the previous one left, in the order the model asked for them.
@@ -741,7 +860,7 @@ async function runConcierge(req, body, opts = {}) {
             return {
               hasSubscription: true,
               subscriptionId: sub.subscriptionId,
-              status: live ? live.status : 'unknown (PayPal not reachable)',
+              status: live ? plainStatus(SUB_STATUS_WORDS, live.status) : 'unknown (PayPal not reachable)',
               cadence,
               pack: itemText(lines),
               bottles,
@@ -752,7 +871,7 @@ async function runConcierge(req, body, opts = {}) {
           // The subscription has ended. With no one-time orders (or when they named it), its pack
           // is the usual, rebuilt as a one-time pack.
           if (named || !history.length) {
-            return rebuild({ fromSubscription: sub.subscriptionId, subscriptionStatus: live.status,
+            return rebuild({ fromSubscription: sub.subscriptionId, subscriptionStatus: plainStatus(SUB_STATUS_WORDS, live.status),
               note: 'That subscription has ended, so this is the same pack as a one-time order.' });
           }
         }
@@ -786,7 +905,7 @@ async function runConcierge(req, body, opts = {}) {
         if (version !== packVersion) return { error: 'The pack changed while checking out. Call start_checkout again.' };
         allowedOrders.add(order.id);
         checkout = { orderId: order.id, total: priced.total, lines, env };
-        return { orderId: order.id, total: `$${priced.total}`, next: 'Shopper presses the PayPal button under the chat to approve.' };
+        return { orderId: order.id, total: `$${priced.total}`, next: 'The PayPal button is now in the chat. Give the total and tell them to tap the PayPal button below to approve. Do not say the order id.' };
       }),
     }),
   };
@@ -854,7 +973,7 @@ async function runConcierge(req, body, opts = {}) {
 
   Object.assign(tools, {
     set_cadence: tool({
-      description: 'Make the current pack a subscription on a cadence (recurring delivery billed by PayPal). Returns the subscriber unit prices and the per-delivery total. Does not start anything.',
+      description: 'Make the current pack a subscription on a cadence (recurring delivery billed by PayPal). Always applies to the current pack (there is only one), so call it as soon as they name a cadence. Returns the subscriber unit prices and the per-delivery total. Does not start anything and shows no PayPal button.',
       parameters: z.object({ cadence: z.enum(['biweekly', 'monthly', 'quarterly']) }),
       execute: serial('set_cadence', async ({ cadence: next }) => {
         if (!pack.length) return { error: 'There is no pack yet. Call build_pack first.' };
@@ -868,6 +987,7 @@ async function runConcierge(req, body, opts = {}) {
           unitPrices: pack.map(l => `${l.qty} x ${FLAVOR_PRICES[l.id].name} at $${centsToValue(unitCents(l.id, next))}`),
           total: `$${priced.total} per delivery`,
           oneTimeTotal: `$${priceCart(pack).total}`,
+          next: 'If they already asked to start or subscribe, call start_subscription now. Otherwise read back the items, cadence and per-delivery total and ask: "Want me to start the subscription?" There is no PayPal button yet, so do not mention one.',
         };
       }),
     }),
@@ -896,7 +1016,8 @@ async function runConcierge(req, body, opts = {}) {
           linkedSubs.push({ subscriptionId: started.subscriptionId, sig: started.sig, cadence: chosen, lines, at: new Date().toISOString(), approved: false });
         }
         return { subscriptionId: started.subscriptionId, total: `$${started.total}`, cadence: chosen, every: everyText(chosen),
-          next: 'Shopper must tap the PayPal button to approve.' };
+          next: 'The PayPal button is now in the chat. Nothing is set up until they approve it in PayPal: say it is ready to approve (never "set up" or "active"), read back the items and per-delivery total, then say: Tap the PayPal button to approve. Do not say the subscription id.',
+          say: `Your subscription is ready to approve: ${linesText(lines)}, $${started.total} per delivery, ${everyText(chosen)}. Tap the PayPal button to approve.` };
       }),
     }),
     subscription_status: tool({
@@ -946,13 +1067,13 @@ async function runConcierge(req, body, opts = {}) {
       subscription,
       pending,
       confirmed: confirmed ? { action: confirmed.action, subscriptionId: confirmed.subscriptionId, ran: confirmed.ran,
-        ok: confirmed.ok, status: (confirmed.result && confirmed.result.status) || null, error: confirmed.error || null } : null,
+        ok: confirmed.ok, status: confirmed.code || null, error: confirmed.error || null } : null,
     };
   };
   // Used only when the model ends a turn with no text.
   const emptySubReply = () => {
     if (pendingAction) return `${pendingAction.summary} Say 'confirm' to go ahead.`;
-    if (subscription) return 'Subscription ready. Tap the PayPal button to approve.';
+    if (subscription) return 'Your subscription is ready to approve. Tap the PayPal button to approve.';
     return confirmedReply(confirmed);
   };
 
@@ -975,7 +1096,7 @@ async function runConcierge(req, body, opts = {}) {
           manageSubscription({ subscriptionId: check.entry.subscriptionId, sig: check.entry.sig, action: check.action }),
           new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error('PayPal timed out'), { status: 504 })), opts.confirmBudgetMs || CONFIRM_BUDGET_MS); }),
         ]);
-        confirmed = { action: check.action, subscriptionId: check.entry.subscriptionId, ran: true, ok: true, result: statusView(st) };
+        confirmed = { action: check.action, subscriptionId: check.entry.subscriptionId, ran: true, ok: true, result: statusView(st), code: st.status };
       } catch (e) {
         if (!(e && [400, 403, 409].includes(e.status))) {
           console.error('[concierge] confirmed', check.action, 'failed:', e && e.status, e && e.message, (e && e.paypal) || '');
@@ -1008,9 +1129,12 @@ async function runConcierge(req, body, opts = {}) {
     try {
       const result = await generateText({
         model,
-        system: systemPrompt(pack, history, fridgeNote, checkout, subs) + '\n\n'
-          + subscriptionPrompt({ subs: linkedSubs, listed: new Set(subs.map(s => s.subscriptionId)), cadence, pack, subscription, pendingAction, confirmed,
-            lastUserText: messages[messages.length - 1].content }),
+        system: [
+          systemPrompt(pack, history, fridgeNote, checkout, subs),
+          subscriptionPrompt({ subs: linkedSubs, listed: new Set(subs.map(s => s.subscriptionId)), cadence, pack, subscription, pendingAction, confirmed,
+            lastUserText: messages[messages.length - 1].content, subButtonShown: !!subscription || earlierButtons().subscription }),
+          stillOnScreenText(),
+        ].filter(Boolean).join('\n\n'),
         messages,
         tools,
         maxSteps: 5,
@@ -1026,8 +1150,17 @@ async function runConcierge(req, body, opts = {}) {
           ? { google: { thinkingConfig: { thinkingBudget: 256 } } }
           : undefined,
       });
+      const earlier = earlierButtons();
+      const offerStart = !!(cadence && pack.length && !subscription && !earlier.subscription && !pendingAction && !confirmed);
+      const reply = tidyReply(result.text, {
+        button: !!(checkout || subscription || earlier.checkout || earlier.subscription),
+        subscriptionStarted: !!subscription,
+        offerStart,
+        emptyLine: offerStart ? 'Want me to start the subscription?' : 'What would you like to do next?',
+        lastUserText: messages[messages.length - 1].content,
+      });
       return {
-        reply: (result.text || '').trim() || emptySubReply() || (checkout ? 'Order ready. Press the PayPal button below to approve.' : 'Done. Check your Fridge.'),
+        reply: reply || emptySubReply() || (checkout ? 'Order ready. Tap the PayPal button below to approve.' : 'Done. Check your Fridge.'),
         pack: packChanged && pack.length ? packView(pack) : null,
         checkout,
         toolsUsed,
@@ -1055,5 +1188,5 @@ async function runConcierge(req, body, opts = {}) {
 module.exports = {
   runConcierge, FLAVOR_NOTES, cleanMessages, cleanLines, cleanPack, cleanHistory, checkoutRequestId,
   modelChain, providerError, isProviderFailure, failureInfo,
-  cleanSubscriptions, checkConfirm, pendingToken, PENDING_TTL_MS,
+  cleanSubscriptions, checkConfirm, pendingToken, PENDING_TTL_MS, tidyReply,
 };

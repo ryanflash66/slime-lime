@@ -191,7 +191,7 @@ function ModePicker() {
           <span className="mono-sm mp-ready" aria-hidden="true"><span className="mp-ready-dot"/>PLAYER 1 · READY</span>
         </div>
         <h2 id="mp-title" className="display-lg mp-title">How do you want to shop?</h2>
-        <p id="mp-desc" className="mp-desc">Talk to the AI Flavor Concierge, or browse the store the usual way. Switch any time with the mic in the nav.</p>
+        <p id="mp-desc" className="mp-desc">Talk to the AI Flavor Concierge, or browse the store the usual way. Switch any time with the mic button.</p>
 
         <div className="mp-cards">
           <button ref={firstRef} type="button" className="mp-card is-handsfree" onClick={choose('handsfree')}
