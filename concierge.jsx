@@ -1,8 +1,9 @@
 /* global React */
 // FLAVOR CONCIERGE — an AI shopping agent in a chat panel.
 // The shopper says how they play; the agent (api/concierge/chat.js) builds a pack from the real
-// lineup, the pack fills the Fridge cart, and the agent creates the PayPal sandbox order. The
-// shopper approves it with the PayPal button in the chat. Prices only ever come from the server.
+// lineup, the pack fills the Fridge cart, and the agent creates the PayPal order (sandbox unless
+// the server runs PAYPAL_ENV=live). The shopper approves it with the PayPal button in the chat.
+// Prices only ever come from the server.
 //
 // Every agent action is also broadcast as a window event, so a voice layer or a visual
 // "watch the agent work" layer can hook in without touching this file:
@@ -12,7 +13,8 @@
 // and driven with window.slConcierge.open(), .close(), .send(text), .pay() (pay needs a user gesture).
 //
 // Order history ("get my usual") lives on this device only: localStorage['sl-orders'] keeps the
-// last 5 paid orders as { orderId, at, lines: [{ id, qty }], total }. No account, no server copy.
+// last 5 paid orders as { orderId, at, lines: [{ id, qty, subscription? }], total }. No account,
+// no server copy. The concierge can only look up (get_order) orders that are in this list.
 const { useState: useStateC, useEffect: useEffectC, useRef: useRefC } = React;
 
 const CC_ORDERS_KEY = 'sl-orders';
@@ -22,25 +24,47 @@ const ccEmit = (type, detail = {}) => {
   try { window.dispatchEvent(new CustomEvent('sl-concierge', { detail: { type, at: Date.now(), ...detail } })); } catch (e) {}
 };
 
+// Orders that could not be written to localStorage (full, blocked, private mode) are kept here
+// for the rest of the visit, so "get my usual" and order lookups still work.
+const ccUnsavedOrders = [];
+
 function ccReadOrders() {
+  let list = [];
   try {
-    const list = JSON.parse(localStorage.getItem(CC_ORDERS_KEY) || '[]');
-    return Array.isArray(list) ? list : [];
-  } catch (e) { return []; }
+    const raw = JSON.parse(localStorage.getItem(CC_ORDERS_KEY) || '[]');
+    if (Array.isArray(raw)) list = raw;
+  } catch (e) {}
+  if (!ccUnsavedOrders.length) return list;
+  const ids = new Set(list.map(o => o && o.orderId));
+  return [...ccUnsavedOrders.filter(o => !ids.has(o.orderId)), ...list]
+    .sort((a, b) => String(b.at).localeCompare(String(a.at)))
+    .slice(0, CC_MAX_ORDERS);
 }
 
-// Called after any captured sandbox payment (Fridge or concierge) with the capture receipt
-// and the cart lines that were paid for.
+const ccNewSession = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : `s${Date.now()}${Math.random().toString(36).slice(2)}`);
+
+// Called after any captured payment (Fridge or concierge) with the capture receipt and the lines
+// that PayPal order was priced for, subscription lines included. Returns false if the order
+// could only be kept in memory.
 function slRecordOrder(receipt, items) {
-  if (!receipt || !receipt.orderId || !Array.isArray(items)) return;
-  const lines = items.filter(i => !i.subscription).map(i => ({ id: i.id, qty: i.qty }));
-  if (!lines.length) return;
+  if (!receipt || !receipt.orderId || !Array.isArray(items)) return false;
+  const lines = items
+    .filter(i => i && i.id && i.qty > 0)
+    .map(i => (i.subscription ? { id: i.id, qty: i.qty, subscription: i.subscription } : { id: i.id, qty: i.qty }));
+  if (!lines.length) return false;
   const entry = { orderId: receipt.orderId, at: new Date().toISOString(), lines, total: receipt.amount || null };
+  let saved = true;
   try {
+    // Read right before writing so an order another tab just saved is kept.
     const next = [entry, ...ccReadOrders().filter(o => o.orderId !== entry.orderId)].slice(0, CC_MAX_ORDERS);
     localStorage.setItem(CC_ORDERS_KEY, JSON.stringify(next));
-  } catch (e) {}
+  } catch (e) {
+    saved = false;
+    ccUnsavedOrders.unshift(entry);
+    console.warn('[concierge] order history not saved to this browser:', e && e.message);
+  }
   window.dispatchEvent(new CustomEvent('sl-orders-changed'));
+  return saved;
 }
 
 const CC_STARTERS = [
@@ -75,6 +99,8 @@ function CCPack({ pack, onOpenFridge }) {
 
 function CCCheckout({ checkout, pay, onPay }) {
   const busy = ['loading', 'paying', 'capturing'].includes(pay.status);
+  // Environment comes from the server (/api/paypal/config, or the checkout itself), never assumed.
+  const env = pay.env || checkout.env;
   const paid = pay.status === 'paid' && pay.receipt && pay.receipt.orderId === checkout.orderId;
   return (
     <div className="cc-card cc-pay">
@@ -84,7 +110,7 @@ function CCCheckout({ checkout, pay, onPay }) {
       ) : (
         <button type="button" className="btn btn-primary cc-pay-btn" aria-busy={busy}
           disabled={!['ready', 'cancelled', 'error', 'paid'].includes(pay.status)}
-          onClick={() => onPay(checkout.orderId)}>
+          onClick={() => onPay(checkout.orderId, checkout.lines)}>
           {pay.status === 'loading' ? 'Loading PayPal…'
             : pay.status === 'paying' ? 'Waiting for PayPal…'
             : pay.status === 'capturing' ? 'Confirming payment…'
@@ -93,7 +119,7 @@ function CCCheckout({ checkout, pay, onPay }) {
         </button>
       )}
       {!paid && pay.message && <div className="cc-pay-msg" role="status">{pay.message}</div>}
-      <div className="cc-sandbox">PAYPAL SANDBOX · TEST MONEY ONLY</div>
+      {env === 'sandbox' && <div className="cc-sandbox">PAYPAL SANDBOX · TEST MONEY ONLY</div>}
     </div>
   );
 }
@@ -110,6 +136,14 @@ function Concierge({ cart, fridgeOpen }) {
   const inputRef = useRefC(null);
   const msgsRef = useRefC(msgs);
   msgsRef.current = msgs;
+  const checkoutRef = useRefC(checkout);
+  checkoutRef.current = checkout;
+  // Synchronous guard: two sends before React re-renders must not both go out.
+  const sendingRef = useRefC(false);
+  // Keys the server's PayPal-Request-Id, so a retried checkout of the same pack reuses its order.
+  // A new one starts after every payment.
+  const sessionRef = useRefC(null);
+  if (!sessionRef.current) sessionRef.current = ccNewSession();
 
   useEffectC(() => {
     const sync = () => setOrders(ccReadOrders());
@@ -118,14 +152,41 @@ function Concierge({ cart, fridgeOpen }) {
     return () => { window.removeEventListener('sl-orders-changed', sync); window.removeEventListener('storage', sync); };
   }, []);
 
+  // A payment from the Fridge retires any concierge checkout still waiting: the shopper must not
+  // be able to pay for the same pack twice.
+  useEffectC(() => {
+    const onPaidElsewhere = e => {
+      const d = (e && e.detail) || {};
+      if (d.source === 'concierge') return;
+      sessionRef.current = ccNewSession();
+      const pending = checkoutRef.current;
+      if (!pending || pending.paid || pending.orderId === d.orderId) return;
+      setCheckout(null);
+      setMsgs(m => [...m, { role: 'assistant', content: 'Your Fridge payment went through, so I closed my PayPal checkout. No double charge.' }]);
+      ccEmit('checkout', { checkout: null });
+    };
+    window.addEventListener('sl-paid', onPaidElsewhere);
+    return () => window.removeEventListener('sl-paid', onPaidElsewhere);
+  }, []);
+
   const pay = window.useShellPayPal({
     active: open && !!checkout,
     items: cart.cart,
-    onPaid: receipt => {
-      slRecordOrder(receipt, cart.cart);
-      cart.clear();
+    onPaid: (receipt, paidLines) => {
+      const pending = checkoutRef.current;
+      const lines = paidLines && paidLines.length ? paidLines : (pending && pending.lines) || [];
+      slRecordOrder(receipt, lines);
+      cart.removePaid(lines);
+      sessionRef.current = ccNewSession();
+      setCheckout(c => (c && c.orderId === receipt.orderId ? { ...c, paid: true } : c));
+      window.dispatchEvent(new CustomEvent('sl-paid', { detail: { orderId: receipt.orderId, source: 'concierge' } }));
       ccEmit('paid', { orderId: receipt.orderId, amount: receipt.amount });
-      send(`I approved the PayPal payment for order ${receipt.orderId}.`, { auto: true });
+      // The cart update above lands on the next render, so say what is left explicitly.
+      const left = cart.cart.filter(i => !i.subscription).map(i => {
+        const paid = lines.filter(l => l.id === i.id).reduce((s, l) => s + l.qty, 0);
+        return { id: i.id, qty: i.qty - paid };
+      }).filter(l => l.qty > 0);
+      send(`I approved the PayPal payment for order ${receipt.orderId}.`, { auto: true, pack: left });
     },
   });
 
@@ -146,9 +207,10 @@ function Concierge({ cart, fridgeOpen }) {
     return () => document.removeEventListener('keydown', onKey);
   }, [open, fridgeOpen]);
 
-  async function send(text, { auto = false } = {}) {
+  async function send(text, { auto = false, pack = null } = {}) {
     const content = String(text || '').trim();
-    if (!content || thinking) return;
+    if (!content || sendingRef.current) return;
+    sendingRef.current = true;
     const history = [...msgsRef.current.filter(m => !m.error), { role: 'user', content, auto }];
     setMsgs(history);
     setInput('');
@@ -160,9 +222,10 @@ function Concierge({ cart, fridgeOpen }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: history.map(m => ({ role: m.role, content: m.content })),
-          pack: cart.cart.filter(i => !i.subscription).map(i => ({ id: i.id, qty: i.qty })),
+          messages: history.slice(-20).map(m => ({ role: m.role, content: m.content })),
+          pack: pack || cart.cart.filter(i => !i.subscription).map(i => ({ id: i.id, qty: i.qty })),
           history: ccReadOrders().map(o => ({ orderId: o.orderId, at: o.at, lines: o.lines })),
+          session: sessionRef.current,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -180,19 +243,18 @@ function Concierge({ cart, fridgeOpen }) {
       setMsgs(m => [...m, { role: 'assistant', content: e.message || 'Something glitched. Try again.', error: true }]);
       ccEmit('error', { message: e.message });
     } finally {
+      sendingRef.current = false;
       setThinking(false);
       ccEmit('thinking', { on: false });
     }
   }
 
   // Public handle for other layers (voice, visual). Refreshed every render so it sees current state.
-  const checkoutRef = useRefC(checkout);
-  checkoutRef.current = checkout;
   window.slConcierge = {
     open: () => setOpen(true),
     close: () => setOpen(false),
     send: text => { setOpen(true); return send(text); },
-    pay: () => { if (checkoutRef.current) pay.start(checkoutRef.current.orderId); },
+    pay: () => { const c = checkoutRef.current; if (c && !c.paid) pay.start(c.orderId, c.lines); },
   };
   useEffectC(() => { ccEmit(open ? 'open' : 'close'); }, [open]);
 

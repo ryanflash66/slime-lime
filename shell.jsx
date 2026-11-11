@@ -128,10 +128,22 @@ function useCart() {
   };
   const remove = id => setCart(c => c.filter(i => i.id !== id));
   const clear = () => setCart([]);
-  // Flavor Concierge: the agent's pack becomes the whole fridge (lines are [{ id, qty }]).
-  const fillPack = lines => setCart(lines
-    .map(l => { const f = FLAVORS.find(x => x.id === l.id); return f ? { ...f, qty: l.qty } : null; })
-    .filter(Boolean));
+  // Flavor Concierge: the agent's pack replaces the one-time bottles in the fridge
+  // (lines are [{ id, qty }]). Subscription lines stay put: the agent never touches them.
+  const fillPack = lines => setCart(c => [
+    ...c.filter(i => i.subscription),
+    ...lines
+      .map(l => { const f = FLAVORS.find(x => x.id === l.id); return f ? { ...f, qty: l.qty } : null; })
+      .filter(Boolean),
+  ]);
+  // After a payment: take out exactly the lines that were paid for ([{ id, qty }]), so anything
+  // added to the fridge after checkout started is still there.
+  const removePaid = lines => setCart(c => c
+    .map(i => {
+      const paid = (lines || []).filter(l => l.id === i.id).reduce((s, l) => s + l.qty, 0);
+      return paid ? { ...i, qty: i.qty - paid } : i;
+    })
+    .filter(i => i.qty > 0));
   // Fridge close-up: set a flavor's exact count (0 clears the slot) without reopening anything.
   const setQty = (f, qty) => setCart(c => {
     if (qty <= 0) return c.filter(i => i.id !== f.id);
@@ -143,7 +155,7 @@ function useCart() {
   const count = cart.reduce((s, i) => s + i.qty, 0);
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
-  return { cart, count, total, add, replaceSubscription, inc, dec, remove, setQty, clear, fillPack, cartOpen, setCartOpen };
+  return { cart, count, total, add, replaceSubscription, inc, dec, remove, setQty, clear, fillPack, removePaid, cartOpen, setCartOpen };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -186,8 +198,21 @@ function shellLoadPayPal() {
 async function shellPostJson(url, body) {
   const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `Request failed (${res.status})`), { status: res.status });
   return data;
+}
+
+// Capture, retrying when the answer is lost (network error or 5xx). The server reports an
+// order that an earlier attempt already captured as a success, so a retry never charges twice.
+async function shellCapture(orderId) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await shellPostJson('/api/paypal/capture', { orderId });
+    } catch (e) {
+      if (attempt >= 2 || (e.status && e.status < 500)) throw e;
+      await new Promise(r => setTimeout(r, 800 * (attempt + 1)));
+    }
+  }
 }
 
 // status: idle | loading | ready | paying | capturing | paid | cancelled | error | unavailable
@@ -198,6 +223,8 @@ function useShellPayPal({ active, items, onPaid }) {
   itemsRef.current = items;
   const onPaidRef = useRef(onPaid);
   onPaidRef.current = onPaid;
+  // The exact lines the pending PayPal order was created for: what gets recorded once it's paid.
+  const pendingRef = useRef(null); // { orderId?, lines }
 
   useEffect(() => {
     if (!active || sessionRef.current) return;
@@ -209,10 +236,13 @@ function useShellPayPal({ active, items, onPaid }) {
         onApprove: async data => {
           setState(s => ({ ...s, status: 'capturing', message: '' }));
           try {
-            const r = await shellPostJson('/api/paypal/capture', { orderId: data.orderId });
+            const r = await shellCapture(data.orderId);
             if (r.status !== 'COMPLETED') throw new Error(`Payment ${String(r.status || 'not completed').toLowerCase()}`);
+            const pending = pendingRef.current;
+            const lines = pending && (!pending.orderId || pending.orderId === r.orderId) ? pending.lines : [];
+            pendingRef.current = null;
             setState(s => ({ ...s, status: 'paid', receipt: r, message: '' }));
-            if (onPaidRef.current) onPaidRef.current(r);
+            if (onPaidRef.current) onPaidRef.current(r, lines);
           } catch (e) {
             setState(s => ({ ...s, status: 'error', message: e.message || 'Payment could not be captured' }));
           }
@@ -230,16 +260,24 @@ function useShellPayPal({ active, items, onPaid }) {
   }, [active]);
 
   // Called straight from the click handler so the PayPal popup isn't blocked.
-  // Pass an orderId when the order already exists (the Flavor Concierge creates its own).
-  const start = existingOrderId => {
+  // Pass an orderId when the order already exists (the Flavor Concierge creates its own),
+  // with the lines that order was priced for.
+  const start = (existingOrderId, existingLines) => {
     const session = sessionRef.current;
     if (!session) return;
     setState(s => ({ ...s, status: 'paying', message: '', receipt: null }));
-    const lines = itemsRef.current.map(i => ({ id: i.id, qty: i.qty, subscription: i.subscription || undefined }));
-    const orderPromise = (typeof existingOrderId === 'string'
+    const existing = typeof existingOrderId === 'string';
+    const lines = existing
+      ? (existingLines || []).map(l => ({ id: l.id, qty: l.qty }))
+      : itemsRef.current.map(i => ({ id: i.id, qty: i.qty, subscription: i.subscription || undefined }));
+    pendingRef.current = { orderId: existing ? existingOrderId : null, lines };
+    const orderPromise = (existing
       ? Promise.resolve({ orderId: existingOrderId })
       : shellPostJson('/api/paypal/orders', { items: lines }))
-      .then(d => ({ orderId: d.orderId }))
+      .then(d => {
+        if (pendingRef.current && pendingRef.current.lines === lines) pendingRef.current.orderId = d.orderId;
+        return { orderId: d.orderId };
+      })
       .catch(e => {
         setState(s => ({ ...s, status: 'error', message: e.message || 'Could not start checkout' }));
         throw e;

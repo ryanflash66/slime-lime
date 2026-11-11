@@ -2,9 +2,11 @@
 //
 // The model talks to the shopper and calls three tools:
 //   build_pack      picks bottles from the real lineup; priced here from catalog.js
-//   start_checkout  creates the PayPal sandbox order for that pack (server prices only)
+//   start_checkout  creates the PayPal order for that pack (server prices only; sandbox unless PAYPAL_ENV=live)
 //   reorder_usual   rebuilds a past order from this device's order history ("get my usual")
-//   get_order       PayPal Agent Toolkit, used to confirm an order or answer "where's my order"
+//   get_order       PayPal Agent Toolkit, used to confirm an order or answer "where's my order".
+//                   Only orders in this browser's own history can be looked up, and only a
+//                   summary (status, amount, items) reaches the model, never payer details.
 //
 // The model never sets a price. It only names flavor ids and quantities; every amount the
 // shopper sees or pays comes from priceCart() in catalog.js.
@@ -14,6 +16,7 @@
 //   otherwise Vercel AI Gateway: AI_GATEWAY_API_KEY, or on Vercel the function's OIDC token.
 //   (AI Gateway needs a card on file on the Vercel team before it serves requests.)
 
+const crypto = require('crypto');
 const { generateText, tool } = require('ai');
 const { createOpenAI } = require('@ai-sdk/openai');
 const { createGoogleGenerativeAI } = require('@ai-sdk/google');
@@ -23,7 +26,8 @@ const { createOrder, paypalEnv } = require('./paypal');
 
 const DEFAULT_MODEL = 'google/gemini-3-flash';      // AI Gateway model id
 const DEFAULT_GOOGLE_MODEL = 'gemini-2.5-flash';     // Gemini API model id
-const MAX_BOTTLES = 48;
+const MAX_BOTTLES = 48;      // biggest pack the concierge builds or checks out
+const MAX_LINE_QTY = 96;     // catalog.js per-line limit; past Fridge orders can go this high
 const MAX_TURNS = 16;
 const MAX_CHARS = 600;
 
@@ -48,11 +52,20 @@ function lineupText() {
 
 function historyText(history) {
   if (!history.length) return 'This device has no past Slime Lime orders.';
-  return 'Past orders paid on this device, newest first (order id, date, items):\n' + history.map(h =>
-    `- ${h.orderId}, ${h.at.slice(0, 10)}: ${h.lines.map(l => `${l.qty} x ${l.id}`).join(', ')}`).join('\n');
+  return 'Past orders paid on this device, newest first (order id, date, items):\n' + history.map(h => {
+    const parts = h.lines.map(l => `${l.qty} x ${l.id}`);
+    if (h.subBottles) parts.push(`${h.subBottles} subscription bottles`);
+    return `- ${h.orderId}, ${h.at.slice(0, 10)}: ${parts.join(', ')}`;
+  }).join('\n');
 }
 
-function systemPrompt(currentPack, history) {
+function moneyRule() {
+  return paypalEnv() === 'live'
+    ? '- This store takes real PayPal payments. Approving the order charges the shopper for real.'
+    : '- This store runs on PayPal sandbox: test money only. Say so if they ask about real charges.';
+}
+
+function systemPrompt(currentPack, history, fridgeNote) {
   return [
     'You are the Slime Lime Flavor Concierge, a shopping agent on the Slime Lime website.',
     'Slime Lime is a clean-formula gaming soda. Every 12 fl oz bottle has 75mg slow-release caffeine with 100mg L-theanine, 5g sugar (0g added), 35 calories and six electrolytes.',
@@ -71,7 +84,7 @@ function systemPrompt(currentPack, history) {
     'Rules:',
     '- Never state a price, total or discount that a tool did not return. Never invent flavors.',
     '- If they want changes, call build_pack again with the full new pack.',
-    '- This store runs on PayPal sandbox: test money only. Say so if they ask about real charges.',
+    moneyRule(),
     '- No health or medical advice beyond the label facts above. Caffeine: suggest they check with a doctor if they are sensitive, under 18 or pregnant.',
     '- Keep every reply under 60 words, friendly, a little gamer-flavored, no markdown headings, no emoji.',
     '- If they go off topic, answer in a line and steer back to the pack.',
@@ -80,7 +93,7 @@ function systemPrompt(currentPack, history) {
     '',
     currentPack && currentPack.length
       ? `Current pack in their Fridge: ${currentPack.map(l => `${l.qty} x ${l.id}`).join(', ')}.`
-      : 'Their Fridge has no concierge pack yet.',
+      : (fridgeNote || 'Their Fridge has no concierge pack yet.'),
   ].join('\n');
 }
 
@@ -93,26 +106,60 @@ function cleanMessages(raw) {
     .map(m => ({ role: m.role, content: m.content.slice(0, MAX_CHARS) }));
 }
 
-// The browser may send the pack it is holding; we re-validate it against the catalog.
+const bottleCount = lines => lines.reduce((s, l) => s + l.qty, 0);
+
+// One-time flavor lines, merged by flavor. Returns null if any line is invalid: quantities are
+// never silently trimmed, so what the server prices is exactly what the browser holds.
+function cleanLines(raw) {
+  if (!Array.isArray(raw) || raw.length > 20) return null;
+  const merged = {};
+  for (const l of raw) {
+    const qty = Number(l && l.qty);
+    if (!l || !FLAVOR_PRICES[l.id] || !Number.isInteger(qty) || qty < 1 || qty > MAX_LINE_QTY) return null;
+    merged[l.id] = (merged[l.id] || 0) + qty;
+  }
+  const lines = Object.entries(merged).map(([id, qty]) => ({ id, qty }));
+  if (lines.some(l => l.qty > MAX_LINE_QTY)) return null;
+  return lines;
+}
+
+// The pack the browser holds (its Fridge, minus subscription lines). The concierge only works
+// with packs of up to MAX_BOTTLES in total; anything else is treated as "no pack".
 function cleanPack(raw) {
-  if (!Array.isArray(raw)) return [];
-  const lines = raw
-    .filter(l => l && FLAVOR_PRICES[l.id] && Number.isInteger(Number(l.qty)) && Number(l.qty) > 0)
-    .map(l => ({ id: l.id, qty: Math.min(MAX_BOTTLES, Number(l.qty)) }));
-  try { priceCart(lines); return lines; } catch (e) { return []; }
+  const lines = cleanLines(raw);
+  if (!lines || !lines.length || bottleCount(lines) > MAX_BOTTLES) return [];
+  return lines;
 }
 
 // Order history lives in the shopper's browser (localStorage); the server only re-checks it.
+// Past quantities are kept as paid (up to the catalog line limit); subscription lines are
+// counted but not rebuilt by reorder_usual.
 const ORDER_ID_RE = /^[A-Z0-9]{8,32}$/;
+const isSubLine = l => !!l && typeof l.id === 'string' && (!!l.subscription || l.id.endsWith('--sub'));
 function cleanHistory(raw) {
   if (!Array.isArray(raw)) return [];
   return raw.slice(0, 5).map(h => {
-    if (!h || typeof h.orderId !== 'string' || !ORDER_ID_RE.test(h.orderId)) return null;
-    const lines = cleanPack(h.lines);
-    if (!lines.length) return null;
+    if (!h || typeof h.orderId !== 'string' || !ORDER_ID_RE.test(h.orderId) || !Array.isArray(h.lines)) return null;
+    const lines = cleanLines(h.lines.filter(l => !isSubLine(l)));
+    if (!lines) return null;
+    const subBottles = h.lines.filter(isSubLine).reduce((s, l) => {
+      const qty = Number(l.qty);
+      return s + (Number.isInteger(qty) && qty > 0 ? Math.min(MAX_LINE_QTY, qty) : 0);
+    }, 0);
+    if (!lines.length && !subBottles) return null;
     const at = typeof h.at === 'string' && !isNaN(Date.parse(h.at)) ? new Date(h.at).toISOString() : new Date(0).toISOString();
-    return { orderId: h.orderId, lines, at };
+    return { orderId: h.orderId, lines, subBottles, at };
   }).filter(Boolean);
+}
+
+// The browser's random per-conversation id. It keys PayPal-Request-Id so a retried
+// start_checkout for the same pack returns the same PayPal order instead of a second one.
+// The browser starts a new session after a payment, so the next identical pack gets a new order.
+const SESSION_RE = /^[A-Za-z0-9_-]{8,64}$/;
+function checkoutRequestId(session, lines) {
+  if (typeof session !== 'string' || !SESSION_RE.test(session)) return undefined;
+  const canonical = lines.map(l => `${l.id}:${l.qty}`).sort().join(',');
+  return 'sl-cc-' + crypto.createHash('sha256').update(`${session}|${canonical}`).digest('hex').slice(0, 48);
 }
 
 function packView(lines) {
@@ -202,9 +249,32 @@ async function runConcierge(req, body, opts = {}) {
   }
 
   let pack = cleanPack(body.pack);
+  const fridgeLines = cleanLines(body.pack);
+  const fridgeNote = !pack.length && fridgeLines && bottleCount(fridgeLines) > MAX_BOTTLES
+    ? `Their Fridge holds ${bottleCount(fridgeLines)} bottles, over the ${MAX_BOTTLES}-bottle concierge limit. They can pay for it from the Fridge, or you can build a new pack.`
+    : '';
   const history = cleanHistory(body.history);
+  const env = paypalEnv();
+  // get_order may only look up orders this browser paid for, or one created in this request.
+  const allowedOrders = new Set(history.map(h => h.orderId));
   let packChanged = false;
+  let packVersion = 0;
   let checkout = null;
+
+  // The model can call several tools in one step and the SDK runs them concurrently. Queue them
+  // so each one sees the pack the previous one left, in the order the model asked for them.
+  let queue = Promise.resolve();
+  const serial = fn => (...args) => {
+    const run = queue.then(() => fn(...args));
+    queue = run.catch(() => {});
+    return run;
+  };
+  const setPack = lines => {
+    pack = lines;
+    packVersion += 1;
+    packChanged = true;
+    checkout = null;
+  };
 
   const lineSchema = z.object({
     flavorId: z.enum(FLAVOR_IDS),
@@ -217,45 +287,52 @@ async function runConcierge(req, body, opts = {}) {
       parameters: z.object({
         items: z.array(lineSchema).min(1).max(6).describe('One entry per flavor.'),
       }),
-      execute: async ({ items }) => {
-        const merged = {};
-        for (const i of items) merged[i.flavorId] = (merged[i.flavorId] || 0) + i.qty;
-        const lines = Object.entries(merged).map(([id, qty]) => ({ id, qty }));
-        const bottles = lines.reduce((s, l) => s + l.qty, 0);
-        if (bottles > MAX_BOTTLES) return { error: `Packs top out at ${MAX_BOTTLES} bottles. Pick fewer.` };
-        pack = lines;
-        packChanged = true;
-        checkout = null;
+      execute: serial(async ({ items }) => {
+        const lines = cleanLines(items.map(i => ({ id: i.flavorId, qty: i.qty })));
+        if (!lines || !lines.length) return { error: 'That pack has an unknown flavor or quantity.' };
+        if (bottleCount(lines) > MAX_BOTTLES) return { error: `Packs top out at ${MAX_BOTTLES} bottles. Pick fewer.` };
+        setPack(lines);
         const view = packView(lines);
         return { bottles: view.bottles, total: `$${view.total}`, items: view.items.map(i => `${i.qty} x ${i.name} at $${i.unit}`) };
-      },
+      }),
     }),
     reorder_usual: tool({
       description: 'Put one of the shopper\'s past orders (from this device) back in their Fridge cart, priced at today\'s catalog prices. Defaults to the newest order.',
       parameters: z.object({
         orderId: z.string().optional().describe('A past order id from the history. Omit for the newest.'),
       }),
-      execute: async ({ orderId }) => {
+      execute: serial(async ({ orderId }) => {
         if (!history.length) return { error: 'No past orders on this device. Build a new pack instead.' };
-        const past = (orderId && history.find(h => h.orderId === orderId)) || history[0];
-        pack = past.lines.map(l => ({ ...l }));
-        packChanged = true;
-        checkout = null;
+        const past = orderId ? history.find(h => h.orderId === orderId) : history[0];
+        if (!past) return { error: `Order ${orderId} is not in this device's history. Ask which past order they mean.` };
+        if (!past.lines.length) {
+          return { error: 'That order was a subscription only. Subscriptions are set up on the Subscribe page, not here.' };
+        }
+        const bottles = bottleCount(past.lines);
+        if (bottles > MAX_BOTTLES) {
+          return { error: `That order had ${bottles} bottles, more than the ${MAX_BOTTLES}-bottle concierge limit. Offer to build a smaller pack, or they can rebuild it in the Fridge.` };
+        }
+        setPack(past.lines.map(l => ({ ...l })));
         const view = packView(pack);
         return { fromOrder: past.orderId, orderedOn: past.at.slice(0, 10), bottles: view.bottles, total: `$${view.total}`,
-          items: view.items.map(i => `${i.qty} x ${i.name} at $${i.unit}`) };
-      },
+          items: view.items.map(i => `${i.qty} x ${i.name} at $${i.unit}`),
+          note: past.subBottles ? `Not included: the ${past.subBottles} subscription bottles from that order.` : undefined };
+      }),
     }),
     start_checkout: tool({
-      description: 'Create the PayPal sandbox order for the current pack. Call only after the shopper agrees to buy. Returns the order id and total.',
+      description: `Create the PayPal ${env === 'live' ? '' : 'sandbox '}order for the current pack. Call only after the shopper agrees to buy. Returns the order id and total.`,
       parameters: z.object({}),
-      execute: async () => {
+      execute: serial(async () => {
         if (!pack.length) return { error: 'There is no pack yet. Call build_pack first.' };
-        const priced = priceCart(pack);
-        const order = await createOrder(priced);
-        checkout = { orderId: order.id, total: priced.total };
+        const lines = pack.map(l => ({ ...l }));
+        const version = packVersion;
+        const priced = priceCart(lines);
+        const order = await createOrder(priced, checkoutRequestId(body.session, lines));
+        if (version !== packVersion) return { error: 'The pack changed while checking out. Call start_checkout again.' };
+        allowedOrders.add(order.id);
+        checkout = { orderId: order.id, total: priced.total, lines, env };
         return { orderId: order.id, total: `$${priced.total}`, next: 'Shopper presses the PayPal button under the chat to approve.' };
-      },
+      }),
     }),
   };
 
@@ -264,10 +341,14 @@ async function runConcierge(req, body, opts = {}) {
     const tk = paypalToolkitTools();
     if (tk.get_order) {
       tools.get_order = tool({
-        description: tk.get_order.description,
-        parameters: tk.get_order.parameters,
-        execute: async (args, opts) => {
-          try { return summarizeOrder(await tk.get_order.execute(args, opts)); }
+        description: `${String(tk.get_order.description || '').trim()}\nOnly orders from this device's order history, or a checkout you just created, can be looked up.`,
+        parameters: z.object({ id: z.string().describe('The PayPal order id.') }),
+        execute: async ({ id }, opts) => {
+          const orderId = String(id || '').trim().toUpperCase();
+          if (!allowedOrders.has(orderId)) {
+            return { error: 'That order is not in this device\'s order history, so it cannot be looked up here.' };
+          }
+          try { return summarizeOrder(await tk.get_order.execute({ id: orderId }, opts)); }
           catch (e) { return { error: 'Could not look that order up right now.' }; }
         },
       });
@@ -280,7 +361,7 @@ async function runConcierge(req, body, opts = {}) {
   try {
     result = await generateText({
     model: opts.model || gatewayModel(req),
-    system: systemPrompt(pack, history),
+    system: systemPrompt(pack, history, fridgeNote),
     messages,
     tools,
     maxSteps: 5,
@@ -300,4 +381,4 @@ async function runConcierge(req, body, opts = {}) {
   };
 }
 
-module.exports = { runConcierge, FLAVOR_NOTES, cleanMessages, cleanPack, cleanHistory };
+module.exports = { runConcierge, FLAVOR_NOTES, cleanMessages, cleanLines, cleanPack, cleanHistory, checkoutRequestId };

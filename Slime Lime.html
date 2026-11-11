@@ -88,7 +88,14 @@ function App() {
         onInc={cart.inc}
         onDec={cart.dec}
         total={cart.total}
-        onPaid={receipt => { window.slRecordOrder(receipt, cart.cart); cart.clear(); }}
+        onPaid={(receipt, lines) => {
+          // Record and remove the lines this PayPal order was priced for, not whatever the cart holds now.
+          const paid = lines && lines.length ? lines : cart.cart.map(i => ({ id: i.id, qty: i.qty, subscription: i.subscription }));
+          window.slRecordOrder(receipt, paid);
+          cart.removePaid(paid);
+          // Retires any concierge checkout still waiting, so the same pack can't be paid twice.
+          window.dispatchEvent(new CustomEvent('sl-paid', { detail: { orderId: receipt.orderId, source: 'fridge' } }));
+        }}
       />
       <window.Concierge cart={cart} fridgeOpen={cart.cartOpen}/>
     </div>
