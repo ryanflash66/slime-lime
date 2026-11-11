@@ -106,7 +106,10 @@ function useCart() {
       const raw = localStorage.getItem('sl-cart');
       if (raw) return JSON.parse(raw);
     } catch (e) {}
-    return [{ ...FLAVORS[0], qty: 12 }];
+    // A first visit starts with an empty Fridge (DAR-710). The design export seeded 12 Lemon-Lime
+    // here as demo data, which made the Hands-free "adding to cart" visual land on an unchanged 12.
+    // A saved sl-cart (even an empty one) always wins above.
+    return [];
   });
   const [cartOpen, setCartOpen] = useState(false);
 

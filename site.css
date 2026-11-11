@@ -1263,7 +1263,8 @@ html[data-mode="handsfree"] .sl-loot { display: none; }
   gap: clamp(18px, 3.4vh, 36px); padding: clamp(16px, 3vh, 32px) var(--hf-gutter) clamp(24px, 5vh, 56px);
 }
 .hf-stage.is-panel .hf-main { padding-right: calc(var(--hf-panel-w) + 16px + var(--hf-gutter)); }
-.hf-visual { min-height: 0; flex: 0 1 auto; display: flex; align-items: flex-end; }
+/* The visual keeps its height: the agent's line is the part that fits itself to what is left. */
+.hf-visual { flex: 0 0 auto; display: flex; align-items: flex-end; }
 .hf-visual:empty { display: none; }
 .hf-words { display: grid; gap: clamp(10px, 1.6vh, 18px); min-width: 0; }
 
@@ -1276,10 +1277,11 @@ html[data-mode="handsfree"] .sl-loot { display: none; }
 .hf-say {
   margin: 0; max-width: 19ch; font: 800 clamp(36px, 4.6vw, 72px)/1.02 var(--font-display); letter-spacing: -0.035em;
   font-optical-sizing: auto; text-wrap: balance; color: var(--fg-1);
-  overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4;
+  overflow-wrap: break-word;
+  /* No line clamp: HFSay fits the whole line to the room, or keeps the last sentence (DAR-712). */
 }
-.hf-say.is-long { max-width: 26ch; font-size: clamp(28px, 3vw, 46px); line-height: 1.08; letter-spacing: -0.028em; -webkit-line-clamp: 5; }
-.hf-say.is-xlong { max-width: 36ch; font-size: clamp(22px, 2.1vw, 32px); line-height: 1.16; letter-spacing: -0.02em; -webkit-line-clamp: 6; }
+.hf-say.is-long { max-width: 26ch; font-size: clamp(28px, 3vw, 46px); line-height: 1.08; letter-spacing: -0.028em; }
+.hf-say.is-xlong { max-width: 36ch; font-size: clamp(22px, 2.1vw, 32px); line-height: 1.16; letter-spacing: -0.02em; }
 .hf-say.is-error { color: var(--fg-2); }
 
 /* Mic / status */
@@ -1374,9 +1376,9 @@ html[data-mode="handsfree"] .sl-loot { display: none; }
   .hf-pill-name { display: none; }
   .hf-pill, .hf-exit { height: 36px; padding: 0 12px; font-size: 13px; }
   .hf-pill b { margin-right: -6px; }
-  .hf-say { font-size: clamp(28px, 8vw, 34px); max-width: none; -webkit-line-clamp: 3; }
-  .hf-say.is-long { font-size: 22px; -webkit-line-clamp: 4; }
-  .hf-say.is-xlong { font-size: 18px; -webkit-line-clamp: 5; }
+  .hf-say { font-size: clamp(28px, 8vw, 34px); max-width: none; }
+  .hf-say.is-long { font-size: 22px; }
+  .hf-say.is-xlong { font-size: 18px; }
   .hf-you { font-size: 15px; -webkit-line-clamp: 1; }
   .hf-orb { width: 52px; height: 52px; }
   .hf-orb svg { width: 22px; height: 22px; }
