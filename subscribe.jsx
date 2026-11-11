@@ -35,6 +35,9 @@ const SUB_CLASSES = ['Tactician', 'Rusher', 'Support', 'Flex'];
 const SUB_PTS = { bottle: 10, stack: 40, rainbow: 60, all6: 100 };
 const subImg = id => `assets/bottle/renders/card-${id}.webp`;
 const subMoney = n => '$' + n.toFixed(2);
+// Discounted price of one bottle in cents, rounded per bottle exactly like unitCents() in
+// api/_lib/catalog.js, so the total shown here matches the Fridge and the PayPal order.
+const subUnitCents = (dollars, save) => Math.round(Math.round(dollars * 100) * (100 - save) / 100);
 const subRand = (a, b) => a + Math.random() * (b - a);
 const subPick = arr => arr[Math.floor(Math.random() * arr.length)];
 const subShuffle = arr => { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
@@ -238,10 +241,16 @@ function SubscribePage({ onAdd, onSubscribe }) {
   const shownScore = Math.round(subscribeUseTween(score, 600));
   const nextFree = active.findIndex(x => !x);
 
-  const basePrice = Object.entries(picks).reduce((s, [id, q]) => s + (byId(id)?.price || 2.5) * q, 0);
   const cad = SUB_CADENCES.find(c => c.id === cadence);
-  const discounted = basePrice * (1 - cad.save / 100);
-  const savings = basePrice - discounted;
+  // The bottles that become cart lines. checkout() builds its lines from this same list with the same
+  // per-bottle rounding, and the totals add up whole cents, so the price shown here is the price the
+  // Fridge and PayPal show.
+  const subPicks = Object.entries(picks).map(([id, qty]) => ({ f: byId(id), qty })).filter(p => p.f && p.qty > 0);
+  const baseCents = subPicks.reduce((s, p) => s + Math.round(p.f.price * 100) * p.qty, 0);
+  const discountedCents = subPicks.reduce((s, p) => s + subUnitCents(p.f.price, cad.save) * p.qty, 0);
+  const basePrice = baseCents / 100;
+  const discounted = discountedCents / 100;
+  const savings = (baseCents - discountedCents) / 100;
 
   // ── feedback bits ──
   const pop = (text, kind, x, y) => {
@@ -563,11 +572,9 @@ function SubscribePage({ onAdd, onSubscribe }) {
 
   // Subscribing: a few bottles fly up into the header Fridge, then the pack lands in the cart.
   const checkout = () => {
-    const lines = Object.entries(picks).map(([id, qty]) => {
-      const f = byId(id);
-      if (!f || qty <= 0) return null;
-      return { ...f, qty, id: `${f.id}--sub`, price: Math.round(f.price * (100 - cad.save)) / 100, sub: `SUB · ${cad.label.toUpperCase()} · −${cad.save}%`, subscription: cad.id };
-    }).filter(Boolean);
+    const lines = subPicks.map(({ f, qty }) => (
+      { ...f, qty, id: `${f.id}--sub`, price: subUnitCents(f.price, cad.save) / 100, sub: `SUB · ${cad.label.toUpperCase()} · −${cad.save}%`, subscription: cad.id }
+    ));
     const send = () => { if (onSubscribe) onSubscribe(lines); else lines.forEach(l => onAdd(l, l.qty)); };
     if (!window.SLGame || reduced) { send(); return; }
     const picksEls = subShuffle(Object.keys(slotEls.current).map(Number).filter(i => i < packSize && slotsRef.current[i])).slice(0, 3);
