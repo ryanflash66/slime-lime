@@ -22,7 +22,7 @@ Production URL: https://slime-lime-eta.vercel.app
 
 - [ ] Final cut is **under 3:00**. Target 2:45.
 - [ ] Uploaded to YouTube as **Public** (not Unlisted, not Private).
-- [ ] **No third-party trademarks on screen.** No Twitch or Discord marks, no other brand logos in tabs, bookmarks or the taskbar. On the site this means: stay at the top of the home page, and don't scroll down to the streamer quotes or the footer (both show Twitch/Discord icons). Don't open the Story or FAQ pages. PayPal's own window is fine; it's the payment partner.
+- [ ] **No third-party trademarks on screen.** No brand logos in tabs, bookmarks or the taskbar. The site itself is clear: the footer uses plain icons and the copy names no other drinks or games (DAR-707), so any page is safe to show. PayPal's own window is fine; it's the payment partner.
 - [ ] **No unlicensed music.** Use no music, or a track you have a license for.
 - [ ] **Chrome only.** Hands-free voice needs Chrome's speech recognition. Say so in the Devpost write-up too.
 - [ ] On-screen text **"PayPal sandbox · test money only"** is visible while the PayPal window is up (shots 9–10) and on the end card. Add it in the editor as a lower-third.
