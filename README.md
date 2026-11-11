@@ -20,6 +20,8 @@ The repo started in April 2026 as a design portfolio piece, before the hackathon
 
 You can also skip the agent: add bottles from the lineup, open the **Fridge**, and click **Pay with PayPal**.
 
+When the hands-free voice mode ships (in progress), a mode picker opens first. Pick **Hands-free** to talk to the concierge instead of typing. Voice needs Chrome.
+
 The full walkthrough, with what to say at each step, is in [`docs/demo-script.md`](docs/demo-script.md).
 
 ## How it works
