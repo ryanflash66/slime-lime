@@ -601,11 +601,15 @@ function SubscribePage({ onAdd, onSubscribe, onSync, fridgeSubs = [] }) {
     pushed.current = isFull ? 'full' : 'empty';
     onSync(isFull ? packLines() : []);
   }, [packSig, linked]);
-  // Fridge → builder: the pack left the Fridge (subscribed in PayPal, or removed there), so unlink;
-  // "Add to Fridge" puts it back.
+  // Fridge → builder: once the Fridge's pack no longer matches the builder (subscribed in PayPal,
+  // changed or removed in the Fridge, or rebuilt by the concierge), unlink so the builder never
+  // overwrites it. "Add to Fridge" sends the builder's pack again.
+  const fridgeSig = fridgeSubs.map(i => `${i.id.replace(/--sub$/, '')}:${i.qty}:${i.subscription}`).sort().join(',');
   useEffectS(() => {
-    if (linked && fridgeSubBottles === 0 && pushed.current === 'full') { pushed.current = null; setLinked(false); }
-  }, [fridgeSubBottles]);
+    if (!linked || pushed.current !== 'full') return;
+    const want = subPicks.map(p => `${p.f.id}:${p.qty}:${cadence}`).sort().join(',');
+    if (fridgeSig !== want) { pushed.current = null; setLinked(false); }
+  }, [fridgeSig]);
 
   // Adding the pack: a few bottles fly up into the header Fridge, then the pack lands in the Fridge,
   // which opens on the "Start subscription" (PayPal) step.
