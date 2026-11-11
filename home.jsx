@@ -696,6 +696,7 @@ function Lineup({ flavors, current, onPick, onAdd }) {
 function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced }) {
   const [hoverRaw, setHover] = useStateH(false);
   const [imgLoaded, setImgLoaded] = useStateH(false);
+  const [imgError, setImgError] = useStateH(false);
   const hover = canHover && hoverRaw;
   const lift = hover && !reduced;
   return (
@@ -730,19 +731,34 @@ function FlavorCard({ flavor, onAdd, onSelect, highlighted, canHover, reduced })
           color: 'inherit', cursor: 'pointer',
           position: 'relative',
         }}>
-        <img src={`assets/scenes/splash-${flavor.id}-640.webp`}
-          srcSet={`assets/scenes/splash-${flavor.id}-640.webp 640w, assets/scenes/splash-${flavor.id}.webp 1200w`}
-          sizes="(max-width: 700px) 92vw, 420px"
-          width={640} height={800} loading="lazy" decoding="async"
-          alt=""
-          onLoad={() => setImgLoaded(true)}
-          style={{
-            display: 'block', width: '100%', height: '100%', objectFit: 'cover',
-            // lazy splash fades in over the card's dark well instead of popping in mid-scroll
-            opacity: imgLoaded ? 1 : 0,
-            transform: lift ? 'scale(1.04)' : 'none',
-            transition: `transform 600ms ${homeSecEase}, opacity ${reduced ? 200 : 300}ms ${homeSecEase}`,
-          }}/>
+        {!imgError ? (
+          <img src={`assets/scenes/splash-${flavor.id}-640.webp`}
+            srcSet={`assets/scenes/splash-${flavor.id}-640.webp 640w, assets/scenes/splash-${flavor.id}.webp 1200w`}
+            sizes="(max-width: 700px) 92vw, 420px"
+            width={640} height={800} loading="lazy" decoding="async"
+            alt=""
+            onLoad={() => setImgLoaded(true)}
+            onError={() => setImgError(true)}
+            style={{
+              display: 'block', width: '100%', height: '100%', objectFit: 'cover',
+              // lazy splash fades in over the card's dark well instead of popping in mid-scroll
+              opacity: imgLoaded ? 1 : 0,
+              transform: lift ? 'scale(1.04)' : 'none',
+              transition: `transform 600ms ${homeSecEase}, opacity ${reduced ? 200 : 300}ms ${homeSecEase}`,
+            }}/>
+        ) : (
+          // A failed splash used to stay at opacity 0, leaving only the dark
+          // well (Sourcery #14). Fall back to a flavor-tinted panel instead.
+          <div aria-hidden
+            style={{
+              display: 'flex', width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center',
+              background: `linear-gradient(160deg, ${flavor.color}66, var(--ink-900) 72%)`,
+              color: flavor.color, font: `800 26px var(--font-display, var(--font-ui))`,
+              textAlign: 'center', padding: '0 16px',
+            }}>
+            {flavor.name}
+          </div>
+        )}
       </button>
 
       <div className="h3" style={{ fontSize: 22 }}>{flavor.name}</div>
