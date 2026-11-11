@@ -12,20 +12,29 @@
 // shopper sees or pays comes from priceCart() in catalog.js.
 //
 // Model access, first match wins:
+//   ANTHROPIC_API_KEY             Claude Haiku 5.5 (CONCIERGE_MODEL overrides the Claude model id).
+//                                 If that call fails at the provider (credit, auth, rate limit,
+//                                 overload, 5xx, network) and the Gemini key is set, the whole turn
+//                                 runs again once on Gemini.
 //   GOOGLE_GENERATIVE_AI_API_KEY  Google Gemini API directly (a free Google AI Studio key works)
 //   otherwise Vercel AI Gateway: AI_GATEWAY_API_KEY, or on Vercel the function's OIDC token.
 //   (AI Gateway needs a card on file on the Vercel team before it serves requests.)
 
 const crypto = require('crypto');
-const { generateText, tool } = require('ai');
+const { generateText, tool, APICallError, RetryError } = require('ai');
 const { createOpenAI } = require('@ai-sdk/openai');
 const { createGoogleGenerativeAI } = require('@ai-sdk/google');
+const { createAnthropic } = require('@ai-sdk/anthropic');
 const { z } = require('zod');
 const { FLAVOR_PRICES, MAX_QTY_PER_LINE, MAX_LINES, priceCart, centsToValue } = require('./catalog');
 const { createOrder, getOrder, paypalEnv } = require('./paypal');
 
 const DEFAULT_MODEL = 'google/gemini-3-flash';      // AI Gateway model id
 const DEFAULT_GOOGLE_MODEL = 'gemini-3.8-flash';     // Gemini API model id (2.5 is closed to new keys)
+const DEFAULT_ANTHROPIC_MODEL = 'claude-haiku-5-5';  // Claude API model id
+const TURN_BUDGET_MS = 50000;  // all model attempts for one turn; the function's maxDuration is 60 s
+const FIRST_TRY_SHARE = 0.5;   // with a fallback waiting, the first model gets at most half of it
+const MIN_FALLBACK_MS = 20000; // and always leaves the fallback this long
 const MAX_BOTTLES = 48;      // biggest pack the concierge builds or checks out
 const MAX_LINE_QTY = MAX_QTY_PER_LINE; // catalog.js per-line limit; past Fridge orders can go this high
 const MAX_TURNS = 16;
@@ -65,7 +74,7 @@ function moneyRule() {
     : '- This store runs on PayPal sandbox: test money only. Say so if they ask about real charges.';
 }
 
-function systemPrompt(currentPack, history, fridgeNote) {
+function systemPrompt(currentPack, history, fridgeNote, openCheckout) {
   return [
     'You are the Slime Lime Flavor Concierge, a shopping agent on the Slime Lime website.',
     'Slime Lime is a clean-formula gaming soda. Every 12 fl oz bottle has 75mg slow-release caffeine with 100mg L-theanine, 5g sugar (0g added), 35 calories and six electrolytes.',
@@ -94,7 +103,11 @@ function systemPrompt(currentPack, history, fridgeNote) {
     currentPack && currentPack.length
       ? `Current pack in their Fridge: ${currentPack.map(l => `${l.qty} x ${l.id}`).join(', ')}.`
       : (fridgeNote || 'Their Fridge has no concierge pack yet.'),
-  ].join('\n');
+    // Set only when a model attempt already opened the order this turn and a fallback finishes it.
+    openCheckout
+      ? `A PayPal order (${openCheckout.orderId}, $${openCheckout.total}) is already open for this pack. Do not start another checkout unless the pack changes; tell them to press the PayPal button below the chat to approve.`
+      : '',
+  ].join('\n').trim();
 }
 
 // Keeps only plain text turns from the browser, trimmed. Tool calls never come from the client.
@@ -235,11 +248,33 @@ async function geminiFetch(url, init) {
   return fetch(url, init);
 }
 
-function gatewayModel(req) {
-  if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-    const google = createGoogleGenerativeAI({ apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY, fetch: geminiFetch });
-    return google(process.env.CONCIERGE_GOOGLE_MODEL || DEFAULT_GOOGLE_MODEL);
+// Claude through @ai-sdk/anthropic v1, which predates Claude Haiku 5.5. Two request fixes:
+// - Haiku 5.5 rejects non-default temperature / top_p / top_k, so none are sent.
+// - Haiku 5.5 thinks by default. AI SDK v4 rebuilds each assistant step with its thinking first
+//   and all text merged, which can reorder blocks, and Claude rejects edited thinking history.
+//   Replies are short, so Haiku runs with thinking off (accepted at its default effort).
+async function anthropicFetch(url, init) {
+  if (init && typeof init.body === 'string') {
+    try {
+      const body = JSON.parse(init.body);
+      delete body.temperature;
+      delete body.top_p;
+      delete body.top_k;
+      if (/haiku/.test(String(body.model || ''))) body.thinking = { type: 'disabled' };
+      init = { ...init, body: JSON.stringify(body) };
+    } catch (e) { /* send as is */ }
   }
+  return fetch(url, init);
+}
+
+// CONCIERGE_MODEL only overrides the Claude model when it names one; a stale Gemini or Gateway
+// id there must not break the primary model.
+function anthropicModelId() {
+  const id = String(process.env.CONCIERGE_MODEL || '').trim();
+  return /^claude-/.test(id) ? id : DEFAULT_ANTHROPIC_MODEL;
+}
+
+function gatewayModel(req) {
   const apiKey = process.env.AI_GATEWAY_API_KEY
     || (req.headers && req.headers['x-vercel-oidc-token'])
     || process.env.VERCEL_OIDC_TOKEN;
@@ -249,17 +284,66 @@ function gatewayModel(req) {
     throw err;
   }
   const gateway = createOpenAI({ apiKey, baseURL: 'https://ai-gateway.vercel.sh/v1', compatibility: 'compatible' });
-  return gateway.chat(process.env.CONCIERGE_MODEL || DEFAULT_MODEL);
+  // Gateway ids are "provider/model"; a bare Claude id meant for the Claude API is not one.
+  const id = String(process.env.CONCIERGE_MODEL || '').trim();
+  return gateway.chat(id.includes('/') ? id : DEFAULT_MODEL);
 }
 
-// Turns "the AI provider refused" into a clear 503 the panel can show.
-function providerError(e) {
-  const msg = String((e && e.message) || '');
-  if (/credit card|api key|unauthori[sz]ed|forbidden|permission|quota|billing/i.test(msg)) {
-    const err = new Error('The concierge AI is not switched on for this site yet.');
-    err.status = 503;
-    err.detail = msg.slice(0, 300);
-    return err;
+// The models to try, in order. Claude first with Gemini as its fallback; Gemini alone when there
+// is no Anthropic key; the AI Gateway only when neither key is set.
+function modelChain(req) {
+  const chain = [];
+  if (process.env.ANTHROPIC_API_KEY) {
+    const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY, fetch: anthropicFetch });
+    chain.push({ name: 'anthropic', model: anthropic(anthropicModelId()) });
+  }
+  if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    const google = createGoogleGenerativeAI({ apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY, fetch: geminiFetch });
+    chain.push({ name: 'gemini', model: google(process.env.CONCIERGE_GOOGLE_MODEL || DEFAULT_GOOGLE_MODEL) });
+  }
+  if (!chain.length) chain.push({ name: 'gateway', model: gatewayModel(req) });
+  return chain;
+}
+
+const unwrapRetry = e => (RetryError.isInstance(e) && e.lastError) || e;
+
+// An error from the provider's HTTP API (any status, or no response at all), after the SDK's own
+// retries. Tool and argument errors are not provider failures. The SDK wraps a failed fetch in
+// APICallError only when it carries a cause, so a bare "fetch failed" counts too.
+const isNetworkError = e => e instanceof TypeError && /fetch failed/i.test(String(e.message));
+const isProviderFailure = e => RetryError.isInstance(e) || APICallError.isInstance(unwrapRetry(e)) || isNetworkError(e);
+
+// Status and error type only, safe to log: never the message, body or headers.
+function failureInfo(e) {
+  const err = unwrapRetry(e);
+  const status = (err && Number(err.statusCode)) || undefined;
+  const data = err && err.data && err.data.error;
+  // Anthropic: { error: { type } }. Gemini: { error: { status } }.
+  let type = data && (data.type || data.status);
+  if (!type) type = (APICallError.isInstance(err) && !status) || isNetworkError(err) ? 'network' : (err && err.name) || 'error';
+  return { status, type: String(type).replace(/[^\w.-]/g, '').slice(0, 40) };
+}
+
+const NOT_ON_RE = /credit|api[ -]?key|unauthori[sz]ed|forbidden|permission|quota|billing/i;
+
+// Turns "the AI provider refused" (or timed out) into a clear 503 the panel can show. `failures`
+// lists what each model in the chain hit ("anthropic 429 rate_limit_error"), for the server log.
+function providerError(e, failures = []) {
+  const err = unwrapRetry(e);
+  const msg = String((err && err.message) || '');
+  const { status, type } = failureInfo(e);
+  const detail = failures.join('; ');
+  if (NOT_ON_RE.test(msg) || [401, 402, 403].includes(status) || /authentication|permission|billing/.test(type)) {
+    const out = new Error('The concierge AI is not switched on for this site yet.');
+    out.status = 503;
+    out.detail = detail;
+    return out;
+  }
+  if (isProviderFailure(e) || type === 'TimeoutError') {
+    const out = new Error('The concierge is busy right now. Try again in a minute.');
+    out.status = 503;
+    out.detail = detail;
+    return out;
   }
   return e;
 }
@@ -272,13 +356,20 @@ async function runConcierge(req, body, opts = {}) {
     throw err;
   }
 
-  let pack = cleanPack(body.pack);
+  const initialPack = cleanPack(body.pack);
   const fridgeLines = cleanLines(body.pack);
-  const fridgeNote = !pack.length && fridgeLines && bottleCount(fridgeLines) > MAX_BOTTLES
+  const fridgeNote = !initialPack.length && fridgeLines && bottleCount(fridgeLines) > MAX_BOTTLES
     ? `Their Fridge holds ${bottleCount(fridgeLines)} bottles, over the ${MAX_BOTTLES}-bottle concierge limit. They can pay for it from the Fridge, or you can build a new pack.`
     : '';
   const history = cleanHistory(body.history);
   const env = paypalEnv();
+
+  // Turn state lives here, outside any one model attempt. If Claude fails partway and the turn
+  // runs again on Gemini, the retry starts from what Claude's tools already did: the system
+  // prompt shows the pack it built and any PayPal order it opened, so Gemini can just finish the
+  // reply. The response has one pack and at most one checkout. A checkout repeated for the same
+  // pack sends the same PayPal-Request-Id, so PayPal returns the order that already exists.
+  let pack = initialPack.map(l => ({ ...l }));
   // get_order may only look up orders this browser paid for, or one created in this request.
   const allowedOrders = new Set(history.map(h => h.orderId));
   let packChanged = false;
@@ -289,8 +380,11 @@ async function runConcierge(req, body, opts = {}) {
   // so each one sees the pack the previous one left, in the order the model asked for them.
   // A tool that throws (PayPal down, bad pack) would end the whole turn in the AI SDK, so
   // failures go back to the model as { error } and it can tell the shopper.
+  // Every tool call this turn, across model attempts (the panel shows them as activity).
+  const toolsUsed = [];
   let queue = Promise.resolve();
   const serial = (name, fn) => (...args) => {
+    toolsUsed.push(name);
     const run = queue.then(() => fn(...args)).catch(e => {
       console.error(`[concierge] ${name} failed:`, e && e.message, (e && e.paypal) || '');
       return { error: name === 'start_checkout'
@@ -378,43 +472,75 @@ async function runConcierge(req, body, opts = {}) {
   tools.get_order = tool({
     description: `${String((tk && tk.description) || 'Retrieves the order details from PayPal for a given order ID.').trim()}\nOnly orders from this device's order history, or a checkout you just created, can be looked up.`,
     parameters: z.object({ id: z.string().describe('The PayPal order id.') }),
-    execute: async ({ id }, opts) => {
+    execute: async ({ id }, toolOpts) => {
+      toolsUsed.push('get_order');
       const orderId = String(id || '').trim().toUpperCase();
       if (!allowedOrders.has(orderId)) {
         return { error: 'That order is not in this device\'s order history, so it cannot be looked up here.' };
       }
-      try { return summarizeOrder(tk ? await tk.execute({ id: orderId }, opts) : await getOrder(orderId)); }
+      try { return summarizeOrder(tk ? await tk.execute({ id: orderId }, toolOpts) : await getOrder(orderId)); }
       catch (e) { return { error: 'Could not look that order up right now.' }; }
     },
   });
 
-  let result;
-  try {
-    const model = opts.model || gatewayModel(req);
-    result = await generateText({
-    model,
-    system: systemPrompt(pack, history, fridgeNote),
-    messages,
-    tools,
-    maxSteps: 5,
-    maxTokens: 1000,
-    temperature: 0.6,
-    // Gemini 2.5 counts thinking against maxTokens too (Gemini 3 is handled in geminiFetch).
-    providerOptions: /gemini-2\.5/.test(String(model.modelId || ''))
-      ? { google: { thinkingConfig: { thinkingBudget: 256 } } }
-      : undefined,
-    });
-  } catch (e) {
-    throw providerError(e);
+  // Tests inject models with opts.models ([{ name, model }]) or opts.model.
+  const chain = opts.models || (opts.model ? [{ name: opts.modelName || 'gateway', model: opts.model }] : modelChain(req));
+  if (!chain.length) {
+    const err = new Error('The concierge AI is not switched on for this site yet.');
+    err.status = 503;
+    throw err;
   }
-
-  const toolsUsed = result.steps.flatMap(s => (s.toolCalls || []).map(c => c.toolName));
-  return {
-    reply: (result.text || '').trim() || (checkout ? 'Order ready. Press the PayPal button below to approve.' : 'Done. Check your Fridge.'),
-    pack: packChanged && pack.length ? packView(pack) : null,
-    checkout,
-    toolsUsed,
-  };
+  // Keep the whole chain inside the function's 60 s limit (vercel.json), so a slow or hung
+  // provider ends in the friendly 503 instead of a platform timeout.
+  const deadline = Date.now() + (opts.budgetMs || TURN_BUDGET_MS);
+  const failures = [];
+  for (let i = 0; i < chain.length; i++) {
+    const { name, model } = chain[i];
+    const next = chain[i + 1];
+    const provider = String(model.provider || '');
+    const isClaude = provider.startsWith('anthropic') || /claude/i.test(String(model.modelId || ''));
+    const left = deadline - Date.now();
+    const budget = Math.max(1000, next ? Math.min(left * FIRST_TRY_SHARE, left - MIN_FALLBACK_MS) : left);
+    const timeout = AbortSignal.timeout(budget);
+    try {
+      const result = await generateText({
+        model,
+        system: systemPrompt(pack, history, fridgeNote, checkout),
+        messages,
+        tools,
+        maxSteps: 5,
+        maxTokens: 1000,
+        // With a fallback waiting, retry Claude once (429 / 5xx / overloaded), not twice.
+        maxRetries: next ? 1 : 2,
+        abortSignal: timeout,
+        // Claude Haiku 5.5 rejects non-default sampling settings.
+        temperature: isClaude ? undefined : 0.6,
+        // Gemini 2.5 counts thinking against maxTokens too (Gemini 3 is handled in geminiFetch).
+        // Google-only, so it is never sent to another provider.
+        providerOptions: provider.startsWith('google') && /gemini-2\.5/.test(String(model.modelId || ''))
+          ? { google: { thinkingConfig: { thinkingBudget: 256 } } }
+          : undefined,
+      });
+      return {
+        reply: (result.text || '').trim() || (checkout ? 'Order ready. Press the PayPal button below to approve.' : 'Done. Check your Fridge.'),
+        pack: packChanged && pack.length ? packView(pack) : null,
+        checkout,
+        toolsUsed,
+        model: name,
+      };
+    } catch (e) {
+      // Let any tool still running finish before the next model sees the state.
+      await queue.catch(() => {});
+      const err = timeout.aborted && !isProviderFailure(e) ? Object.assign(new Error('timed out'), { name: 'TimeoutError' }) : e;
+      const info = failureInfo(err);
+      failures.push(`${name} ${info.status || '-'} ${info.type}`);
+      console.error(`[concierge] ${name} failed: ${info.status || 'no status'} ${info.type}${next ? `; retrying once on ${next.name}` : ''}`);
+      if (!next) throw providerError(err, failures);
+    }
+  }
 }
 
-module.exports = { runConcierge, FLAVOR_NOTES, cleanMessages, cleanLines, cleanPack, cleanHistory, checkoutRequestId };
+module.exports = {
+  runConcierge, FLAVOR_NOTES, cleanMessages, cleanLines, cleanPack, cleanHistory, checkoutRequestId,
+  modelChain, providerError, isProviderFailure, failureInfo,
+};
