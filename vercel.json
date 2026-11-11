@@ -3,6 +3,6 @@
     { "source": "/", "destination": "/Slime Lime.html" }
   ],
   "functions": {
-    "api/concierge/chat.js": { "maxDuration": 30 }
+    "api/concierge/chat.js": { "maxDuration": 60 }
   }
 }
