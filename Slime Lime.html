@@ -51,6 +51,8 @@
 <script type="text/babel" src="fridge.jsx"></script>
 <script type="text/babel" src="concierge.jsx"></script>
 <script type="text/babel" src="mode.jsx"></script>
+<script type="text/babel" src="voice.jsx"></script>
+<script type="text/babel" src="handsfree-fx.jsx"></script>
 <script type="text/babel" src="home.jsx"></script>
 <script type="text/babel" src="flagship.jsx"></script>
 <script type="text/babel" src="subscribe.jsx"></script>
@@ -79,7 +81,7 @@ function App() {
   return (
     <div>
       <window.Nav cartCount={cart.count} onCart={() => cart.setCartOpen(true)} route={url}/>
-      <div ref={pageRef}>{page}</div>
+      <div ref={pageRef} className="sl-page">{page}</div>
       <window.Footer/>
       <window.FridgeDrawer
         open={cart.cartOpen}
@@ -97,6 +99,7 @@ function App() {
           window.dispatchEvent(new CustomEvent('sl-paid', { detail: { orderId: receipt.orderId, source: 'fridge' } }));
         }}
       />
+      <window.HandsFreeStage cart={cart}/>
       <window.Concierge cart={cart} fridgeOpen={cart.cartOpen}/>
       <window.ModePicker/>
     </div>
