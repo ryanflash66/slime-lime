@@ -373,11 +373,14 @@ function confirmedReply(confirmed) {
 // A sentence that sends the shopper to a PayPal button ("Tap the PayPal button to approve.",
 // "Press the button below to pay."). Lines about the Fridge's buttons, the Confirm card or the
 // mic are left alone.
-const TAP_RE = /\b(tap|click|press|hit|push)(ing|ed)?\b/i;
+// An imperative tap aimed at PayPal itself ("Tap PayPal to approve", "click the PayPal one"),
+// not any sentence with a tap verb and "PayPal" ("hit me up when you want to pay with PayPal",
+// "you tapped through PayPal, so it's paid").
+const TAP_PAYPAL_RE = /\b(tap|click|press)\s+(?:on\s+)?(?:the\s+)?(?:yellow\s+)?paypal\b/i;
 function sendsToPayPalButton(sentence) {
   if (/\b(fridge|confirm|keep it|mic|microphone)\b/i.test(sentence)) return false;
   if (/\bpaypal\b[^.!?]{0,20}\bbutton\b/i.test(sentence)) return true;
-  if (TAP_RE.test(sentence) && /\bpaypal\b/i.test(sentence)) return true;
+  if (TAP_PAYPAL_RE.test(sentence)) return true;
   return /\b(tap|click|press|hit|push)\b[^.!?]{0,30}\bbutton\b/i.test(sentence)
     && /\b(pay|approve|approval|subscribe|checkout|check out)\b/i.test(sentence);
 }
@@ -387,8 +390,10 @@ const sentencesOf = text => (text.match(/[\s\S]*?(?:[.!?]+["')\]]*(?=\s|$)|\n|$)
 
 // PayPal order ids (17 characters, letters and digits) and subscription ids (I-...).
 const PAYPAL_ID = '(?:I-[A-Z0-9]{10,}|(?=[A-Z0-9]*\\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{12,})';
-const ID_AFTER_NOUN_RE = new RegExp(`\\b([Ss]ubscription|[Oo]rder)(?:\\s+(?:number|id|ID))?(?:,?\\s+|:\\s*|\\s*\\(\\s*|\\s*#)${PAYPAL_ID}\\b\\)?`, 'g');
+const ID_AFTER_NOUN_RE = new RegExp(`\\b([Ss]ubscription|[Oo]rder)(?:\\s+(?:number|id|ID))?(?:,?\\s+|:\\s*|\\s*#)${PAYPAL_ID}\\b`, 'g');
 const ID_IN_PARENS_RE = new RegExp(`\\s*\\(\\s*${PAYPAL_ID}\\s*\\)`, 'g');
+// "(order 28V08527F6696931Y)" / "(subscription I-...)": drop the whole aside.
+const NOUN_ID_IN_PARENS_RE = new RegExp(`\\s*\\(\\s*(?:[Ss]ubscription|[Oo]rder)(?:\\s+(?:number|id|ID))?(?:,?\\s+|:\\s*|\\s*#)${PAYPAL_ID}\\s*\\)`, 'g');
 const ID_ALONE_RE = new RegExp(`\\b${PAYPAL_ID}\\b`, 'g');
 // The shopper asked for the id itself ("what's my order id?", "order number?"): keep it.
 const ASKS_FOR_ID_RE = /\b(ids?|order\s+(number|#|code)|subscription\s+(number|#|code)|reference|confirmation\s+(number|code))\b|\border\s*#/i;
@@ -396,6 +401,7 @@ const ASKS_FOR_ID_RE = /\b(ids?|order\s+(number|#|code)|subscription\s+(number|#
 // "your subscription" ("Your ..." at the start of a sentence).
 function dropIds(text) {
   return text
+    .replace(NOUN_ID_IN_PARENS_RE, '')
     .replace(ID_AFTER_NOUN_RE, '$1')
     .replace(ID_IN_PARENS_RE, '')
     .replace(ID_ALONE_RE, (id, at, all) => {
