@@ -75,7 +75,8 @@ async function paypalRequest(method, path, body, requestId) {
   return data;
 }
 
-async function createOrder({ items, total }) {
+// Pass `requestId` to make creation idempotent: a replay returns the order PayPal already made.
+async function createOrder({ items, total }, requestId) {
   return paypalFetch('/v2/checkout/orders', {
     intent: 'CAPTURE',
     purchase_units: [{
@@ -87,11 +88,15 @@ async function createOrder({ items, total }) {
         breakdown: { item_total: { currency_code: 'USD', value: total } },
       },
     }],
-  });
+  }, requestId);
 }
 
 async function captureOrder(orderId) {
   return paypalFetch(`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`);
+}
+
+async function getOrder(orderId) {
+  return paypalGet(`/v2/checkout/orders/${encodeURIComponent(orderId)}`);
 }
 
 function upstreamError(message, status, data) {
@@ -117,4 +122,4 @@ function readJson(req) {
   return {};
 }
 
-module.exports = { paypalEnv, paypalFetch, paypalGet, createOrder, captureOrder, sendError, readJson };
+module.exports = { paypalEnv, paypalFetch, paypalGet, createOrder, captureOrder, getOrder, sendError, readJson };
