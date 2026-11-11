@@ -146,9 +146,15 @@ is never billed, so a retry or double click costs nothing.
 
 ### In the browser
 
-The Fridge (`fridge.jsx`) shows two checkouts when the cart holds both kinds of line:
-"Start subscription · $X every <cadence>" for the crisper pack and "Pay with PayPal · $Y" for the
-one-time bottles. `useShellPayPalSub` in `shell.jsx` drives the first one on PayPal JS SDK v6:
+PayPal can't take a one-time payment and a subscription in one checkout, so the Fridge
+(`fridge.jsx`) shows two buttons when the cart holds both kinds of line:
+"Start subscription · $X every <cadence>" for the subscription pack (listed first) and
+"Pay with PayPal · $Y once" for the one-time bottles.
+
+The Subscribe page (`subscribe.jsx`) only builds the pack: "Add to Fridge" puts it in the Fridge
+and opens it on the "Start subscription" step. After that the two stay in sync: editing the
+builder updates the Fridge's pack, and a builder that isn't full takes the pack out until it is.
+Once the pack leaves the Fridge (subscribed, or removed there), the builder unlinks. `useShellPayPalSub` in `shell.jsx` drives the first one on PayPal JS SDK v6:
 
 1. `shellLoadPayPal()` creates one SDK instance with
    `components: ['paypal-payments', 'paypal-subscriptions']`; the hook checks
