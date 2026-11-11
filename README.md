@@ -31,6 +31,7 @@ The full walkthrough, with what to say at each step, is in [`docs/demo-script.md
 - **Prices are always computed on the server.** The browser and the AI model only send flavor ids and quantities. Every amount PayPal charges comes from `api/_lib/catalog.js`, so a tampered cart or a confused model can't change a price.
 - **The concierge never sees payer details.** It confirms payment with `get_order` from the PayPal Agent Toolkit, wrapped by `summarizeOrder` in `api/_lib/concierge.js`, which passes back only order status and amounts.
 - **"My usual" stays on the device.** The last 5 paid orders (order id, date, flavor ids and quantities, total) live in `localStorage['sl-orders']`. No accounts, no server database.
+- **Public endpoints have abuse limits.** The concierge refuses oversized requests before any model call (32 KB body, 20 messages, 20 pack lines, 5 history entries) and caps each turn at 5 tool steps and 700 output tokens. A Vercel Firewall rate limit (20 requests per minute per IP on the concierge, 10 on the PayPal order and subscription endpoints) is specified in [`docs/limits.md`](docs/limits.md) but **not applied yet**; that file has the exact rules and their status. When the firewall answers 429, the chat shows "Easy there — the concierge needs a breather. Try again in a minute."
 - **Subscription plans are auto-provisioned** (in progress). The server finds or creates the PayPal catalog product and one billing plan per cadence, so nobody copies plan ids into env vars. See [`docs/subscriptions.md`](docs/subscriptions.md).
 
 Key files:
