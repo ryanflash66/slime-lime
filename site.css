@@ -1057,3 +1057,104 @@ html { scroll-behavior: smooth; }
   .cc-launch > span:nth-child(2) { display: none; }
   .cc-panel { right: 8px; left: 8px; bottom: 8px; width: auto; height: min(78svh, calc(100svh - 96px)); }
 }
+
+/* ─────────────────────────────────────────────────────────────
+   MODE PICKER (mode.jsx): Hands-free vs Legacy, first visit only.
+   z-index 110: above the Fridge (100) and the concierge panel (97),
+   below the loot flight (120), confetti rain (250) and the route curtain (300).
+   ───────────────────────────────────────────────────────────── */
+.mp-root { position: fixed; inset: 0; z-index: 110; display: grid; place-items: center; padding: 16px; box-sizing: border-box; }
+.mp-backdrop {
+  position: absolute; inset: 0; background: radial-gradient(120% 90% at 50% 30%, var(--accent-soft), transparent 60%), rgba(2, 6, 4, 0.82);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+/* Enter/exit motion is WAAPI in mode.jsx: the reduced-motion rule above pauses CSS animations. */
+.mp-dialog {
+  position: relative; width: min(880px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain;
+  box-sizing: border-box; padding: clamp(22px, 4vw, 44px); border-radius: var(--radius-xl);
+  border: 1px solid var(--border-2); background: rgba(6, 13, 8, 0.94);
+  box-shadow: var(--shadow-xl), 0 0 0 1px var(--accent-soft), 0 0 80px var(--accent-soft);
+}
+.mp-dialog > .hud-frame-corners { inset: 14px; }
+.mp-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.mp-ready { display: inline-flex; align-items: center; gap: 8px; color: var(--fg-3); }
+.mp-ready-dot { width: 7px; height: 7px; border-radius: 50%; background: #3BEA7C; box-shadow: 0 0 8px rgba(59, 234, 124, 0.7); animation: pulse 1.6s infinite; }
+.mp-title { margin-top: 18px; font-size: clamp(32px, 4.6vw, 60px); color: var(--fg-1); }
+.mp-desc { margin: 14px 0 0; max-width: 560px; font: 400 clamp(15px, 1.3vw, 17px)/1.55 var(--font-body); color: var(--fg-2); }
+
+.mp-cards { display: grid; grid-template-columns: 1.15fr 1fr; gap: 16px; margin-top: clamp(22px, 3vw, 32px); }
+.mp-card {
+  position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; min-height: 248px; box-sizing: border-box;
+  padding: 22px; border-radius: var(--radius-lg); border: 1px solid var(--border-2); background: var(--surface-card);
+  color: var(--fg-1); font: inherit; text-align: left; cursor: pointer; overflow: hidden;
+  transition: transform 160ms var(--ease-out), border-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out), background-color 200ms var(--ease-out);
+}
+.mp-card.is-handsfree {
+  border-color: var(--border-lime); border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: radial-gradient(120% 100% at 0% 0%, var(--accent-soft), transparent 65%), var(--surface-card);
+  box-shadow: 0 0 0 1px var(--accent-soft), 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+.mp-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.mp-card-top { display: flex; align-items: center; gap: 12px; width: 100%; }
+.mp-icon { display: grid; place-items: center; width: 52px; height: 52px; flex-shrink: 0; border-radius: var(--radius-md);
+  border: 1px solid var(--border-2); background: var(--ink-900); color: var(--fg-2); }
+.mp-card.is-handsfree .mp-icon { background: var(--accent); border-color: transparent; color: var(--ink-900); box-shadow: 0 0 24px var(--accent-glow), var(--gloss-pill); }
+.mp-tag { margin-left: auto; padding: 5px 9px; border-radius: var(--radius-pill); border: 1px solid var(--border-2);
+  font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--fg-3); }
+.mp-card.is-handsfree .mp-tag { border-color: transparent; background: var(--accent-soft); color: var(--accent); }
+.mp-wave { display: inline-flex; align-items: center; gap: 3px; height: 28px; }
+.mp-wave i { width: 3px; height: 100%; border-radius: 2px; background: var(--accent); transform: scaleY(0.3); animation: mp-wave 1.2s ease-in-out infinite; }
+.mp-wave i:nth-child(2) { animation-delay: 0.12s; } .mp-wave i:nth-child(3) { animation-delay: 0.24s; }
+.mp-wave i:nth-child(4) { animation-delay: 0.36s; } .mp-wave i:nth-child(5) { animation-delay: 0.48s; }
+.mp-card-name { display: block; margin-top: 10px; font: 800 clamp(28px, 3vw, 38px)/1 var(--font-display); letter-spacing: -0.035em; }
+.mp-card-line { display: block; font: 400 15px/1.5 var(--font-body); color: var(--fg-2); max-width: 36ch; }
+.mp-note { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: var(--radius-pill);
+  border: 1px solid rgba(255, 200, 61, 0.4); color: var(--warning); font: 600 10px/1 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.mp-card-cta { margin-top: auto; padding-top: 8px; display: inline-flex; align-items: center; gap: 8px; font: 600 14px/1 var(--font-ui); color: var(--fg-2);
+  transition: color 200ms var(--ease-out), gap 200ms var(--ease-out); }
+.mp-card.is-handsfree .mp-card-cta { color: var(--accent); }
+
+.mp-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 20px; }
+.mp-hint { color: var(--fg-4); }
+.mp-skip { padding: 12px 22px; }
+
+@media (hover: hover) and (pointer: fine) {
+  .mp-card:hover { transform: translateY(-2px); border-color: var(--border-strong); background-color: var(--surface-card-hover); }
+  .mp-card.is-handsfree:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 40px var(--accent-glow), 0 18px 48px rgba(0, 0, 0, 0.45); }
+  .mp-card:hover .mp-card-cta { gap: 12px; color: var(--fg-1); }
+  .mp-card.is-handsfree:hover .mp-card-cta { color: var(--accent); }
+}
+.mp-card:active { transform: scale(0.985); }
+
+.mp-root.is-closing { pointer-events: none; }
+
+@keyframes mp-wave { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
+
+@media (max-width: 599px) {
+  .mp-root { padding: 10px; align-items: end; }
+  .mp-dialog { max-height: calc(100dvh - 20px); padding: 22px 18px 18px; border-radius: var(--radius-lg); }
+  .mp-dialog > .hud-frame-corners { inset: 8px; }
+  .mp-cards { grid-template-columns: 1fr; gap: 12px; }
+  .mp-card { min-height: 0; padding: 18px; gap: 8px; }
+  .mp-icon { width: 44px; height: 44px; }
+  .mp-card-name { margin-top: 4px; }
+  .mp-card-line { font-size: 14px; }
+  .mp-hint { display: none; }
+  .mp-skip { width: 100%; }
+}
+
+/* Reduced motion: fades only (mode.jsx drops the rise), static wave, no lift on hover. */
+@media (prefers-reduced-motion: reduce) {
+  .mp-wave i { animation: none; transform: scaleY(0.6); }
+  .mp-wave i:nth-child(2), .mp-wave i:nth-child(4) { transform: scaleY(0.9); }
+  .mp-ready-dot { animation: none; }
+  .mp-card, .mp-card:active { transition: border-color 200ms var(--ease-out), box-shadow 200ms var(--ease-out), background-color 200ms var(--ease-out); transform: none; }
+}
+@media (prefers-reduced-motion: reduce) and (hover: hover) and (pointer: fine) {
+  .mp-card:hover { transform: none; }
+}
+
+/* Nav: Hands-free toggle (shell.jsx) */
+.sl-mode-toggle.is-on { color: var(--ink-900); background: var(--accent); border-color: transparent; box-shadow: 0 0 0 1px var(--accent), 0 0 18px var(--accent-glow); }
+@media (hover: hover) and (pointer: fine) { .sl-mode-toggle.is-on:not(:disabled):hover { color: var(--ink-900); border-color: transparent; } }
+.sl-mode-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

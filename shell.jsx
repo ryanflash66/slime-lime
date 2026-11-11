@@ -47,6 +47,7 @@ function Icon({ name, size = 20, stroke = 1.75 }) {
     chip:   <><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></>,
     star:   <path d="M12 2l3 7 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/>,
     map:    <><path d="M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z"/><path d="M9 3v15M15 6v15"/></>,
+    mic:    <><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3M8 21h8"/></>,
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -610,8 +611,28 @@ function Nav({ cartCount, onCart, route }) {
     navTo(path);
   };
 
+  // Hands-free / Legacy (mode.jsx owns the stored mode and the 'sl-mode' event).
+  const [mode, setModeUi] = useState(() => (window.slMode ? window.slMode.get() : 'legacy'));
+  useEffect(() => {
+    const onMode = () => setModeUi(window.slMode.get());
+    window.addEventListener('sl-mode', onMode);
+    return () => window.removeEventListener('sl-mode', onMode);
+  }, []);
+  const handsfree = mode === 'handsfree';
+  const toggleMode = () => {
+    if (!window.slMode) return;
+    // Hands-free opens the concierge, which takes focus: get the menu panel out of its way.
+    if (!handsfree) setMenuOpen(false);
+    window.slMode.set(handsfree ? 'legacy' : 'handsfree', 'nav');
+  };
+
   const utilityButtons = (
     <>
+      <button type="button" className={'iconbtn sl-mode-toggle' + (handsfree ? ' is-on' : '')}
+              aria-pressed={handsfree} aria-label="Hands-free mode" title={handsfree ? 'Hands-free is on' : 'Hands-free mode'}
+              onClick={toggleMode}>
+        <Icon name="mic" size={18}/>
+      </button>
       <button className="iconbtn" aria-label="Search"><Icon name="search" size={18}/></button>
       <button className="iconbtn" aria-label="Account"><Icon name="user" size={18}/></button>
     </>

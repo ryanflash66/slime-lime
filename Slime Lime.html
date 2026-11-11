@@ -50,6 +50,7 @@
 <script type="text/babel" src="shell.jsx"></script>
 <script type="text/babel" src="fridge.jsx"></script>
 <script type="text/babel" src="concierge.jsx"></script>
+<script type="text/babel" src="mode.jsx"></script>
 <script type="text/babel" src="home.jsx"></script>
 <script type="text/babel" src="flagship.jsx"></script>
 <script type="text/babel" src="subscribe.jsx"></script>
@@ -98,6 +99,7 @@ function App() {
         }}
       />
       <window.Concierge cart={cart} fridgeOpen={cart.cartOpen}/>
+      <window.ModePicker/>
     </div>
   );
 }
