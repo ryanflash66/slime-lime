@@ -17,6 +17,7 @@ The repo started in April 2026 as a design portfolio piece, before the hackathon
 3. The agent builds a pack and drops it into the Fridge (the cart). Say *"yes, check out"*.
 4. Approve the payment with the PayPal button in the chat, using a PayPal sandbox buyer account. The agent then confirms the order with PayPal.
 5. Open the concierge again and say *"get my usual"* to reload your last order.
+6. Or say *"make it monthly and start my subscription"* and tap **Subscribe with PayPal**. Later, *"what's my subscription?"*, *"pause it"* and then *"confirm"*: the agent changes nothing until you confirm.
 
 You can also skip the agent: add bottles from the lineup, open the **Fridge**, and click **Pay with PayPal**.
 

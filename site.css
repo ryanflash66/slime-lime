@@ -1044,6 +1044,12 @@ html { scroll-behavior: smooth; }
 .cc-paid { padding: 12px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font: 700 13px/1.2 var(--font-mono); letter-spacing: 0.04em; text-align: center; }
 .cc-pay-msg { font: 500 12px/1.4 var(--font-mono); color: var(--fg-2); text-align: center; }
 .cc-sandbox { font: 400 10px var(--font-mono); color: var(--fg-4); text-align: center; letter-spacing: 0.06em; }
+/* Pause / resume / cancel waiting for the shopper's confirm (DAR-702). */
+.cc-confirm { display: grid; gap: 10px; border-color: var(--accent); }
+.cc-confirm-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.cc-confirm-btn { padding: 11px 14px; font-size: 13px; justify-content: center; }
+.cc-confirm-btn.is-danger { border-color: rgba(255, 61, 92, 0.6); color: #ff8fa3; }
+.cc-confirm-btn.is-danger:hover { background: rgba(255, 61, 92, 0.12); }
 
 .cc-form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border-1); }
 .cc-input { flex: 1; min-width: 0; padding: 12px 14px; border-radius: var(--radius-md); border: 1px solid var(--border-2); background: var(--ink-900);
