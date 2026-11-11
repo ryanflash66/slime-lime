@@ -25,7 +25,7 @@ const { FLAVOR_PRICES, MAX_QTY_PER_LINE, MAX_LINES, priceCart, centsToValue } = 
 const { createOrder, getOrder, paypalEnv } = require('./paypal');
 
 const DEFAULT_MODEL = 'google/gemini-3-flash';      // AI Gateway model id
-const DEFAULT_GOOGLE_MODEL = 'gemini-2.5-flash';     // Gemini API model id
+const DEFAULT_GOOGLE_MODEL = 'gemini-3.8-flash';     // Gemini API model id (2.5 is closed to new keys)
 const MAX_BOTTLES = 48;      // biggest pack the concierge builds or checks out
 const MAX_LINE_QTY = MAX_QTY_PER_LINE; // catalog.js per-line limit; past Fridge orders can go this high
 const MAX_TURNS = 16;
@@ -214,9 +214,30 @@ function summarizeOrder(raw) {
   };
 }
 
+const isGemini3 = id => /gemini-([3-9]|\d{2})/.test(String(id || ''));
+
+// Gemini 3 wants a thought signature on every function call it is sent back, and @ai-sdk/google
+// v1 does not keep them. Google documents a placeholder signature for that case; add it to
+// function-call parts that have none, and keep thinking low so replies fit in maxTokens.
+async function geminiFetch(url, init) {
+  if (init && typeof init.body === 'string' && isGemini3(url)) {
+    try {
+      const body = JSON.parse(init.body);
+      for (const c of body.contents || []) {
+        for (const part of c.parts || []) {
+          if (part.functionCall && !part.thoughtSignature) part.thoughtSignature = 'skip_thought_signature_validator';
+        }
+      }
+      body.generationConfig = { ...(body.generationConfig || {}), thinkingConfig: { thinkingLevel: 'low' } };
+      init = { ...init, body: JSON.stringify(body) };
+    } catch (e) { /* send as is */ }
+  }
+  return fetch(url, init);
+}
+
 function gatewayModel(req) {
   if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-    const google = createGoogleGenerativeAI({ apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY });
+    const google = createGoogleGenerativeAI({ apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY, fetch: geminiFetch });
     return google(process.env.CONCIERGE_GOOGLE_MODEL || DEFAULT_GOOGLE_MODEL);
   }
   const apiKey = process.env.AI_GATEWAY_API_KEY
@@ -378,8 +399,8 @@ async function runConcierge(req, body, opts = {}) {
     maxSteps: 5,
     maxTokens: 1000,
     temperature: 0.6,
-    // Gemini 2.5+ counts thinking tokens against maxTokens; keep thinking small so replies fit.
-    providerOptions: /gemini-(2\.5|[3-9])/.test(String(model.modelId || ''))
+    // Gemini 2.5 counts thinking against maxTokens too (Gemini 3 is handled in geminiFetch).
+    providerOptions: /gemini-2\.5/.test(String(model.modelId || ''))
       ? { google: { thinkingConfig: { thinkingBudget: 256 } } }
       : undefined,
     });
