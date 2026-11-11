@@ -6,7 +6,7 @@ const storyFaqEaseOut = 'cubic-bezier(0.23,1,0.32,1)';
 const storyFaqAutoGrid = (gap, min = 240) => ({ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${min}px), 1fr))`, gap });
 
 const storyFaqTimeline = [
-  { y: '2023', t: 'The rant', b: 'A Discord thread about why every energy drink crashes you at hour four turns into a 200-message manifesto.' },
+  { y: '2023', t: 'The rant', b: 'A group-chat thread about why every energy drink crashes you at hour four turns into a 200-message manifesto.' },
   { y: '2024', t: 'Formula 01', b: 'Six months in a food-science lab. We test 31 caffeine/L-theanine combos. We pick the smoothest one.' },
   { y: '2025', t: 'First batch', b: 'Lemon-Lime ships to 4,200 backers. Sells through in 11 days. We restock and add Cherry, Blue Rasp.' },
   { y: '2026', t: 'You', b: 'Mango and Grape drop. The lineup is six. We ship to 41 countries. The fridge keeps growing.' },
@@ -37,7 +37,7 @@ function StoryPage() {
             We were tired<br/>of crashing<br/><span style={{ color: 'var(--accent)' }}>at hour four.</span>
           </h1>
           <p className="body-lg" style={{ maxWidth: 640 }}>
-            Slime Lime started as a Discord server full of mid-tournament rants about energy drinks. Two years later it's a clean-formula soda built specifically for the long session — and the brand we wish had existed when we were pulling all-nighters in college.
+            Slime Lime started as a gaming group chat full of mid-tournament rants about energy drinks. Two years later it's a clean-formula soda built specifically for the long session — and the brand we wish had existed when we were pulling all-nighters in college.
           </p>
         </div>
       </section>
@@ -92,7 +92,7 @@ function StoryPage() {
           <div className="eyebrow" style={{ marginBottom: 16, display: 'inline-flex' }}>// THE PEOPLE</div>
           <h2 className="display-lg" style={{ marginBottom: 24 }}>Built by gamers.<br/><span style={{ color: 'var(--accent)' }}>Backed by chemists.</span></h2>
           <p className="body-lg" style={{ maxWidth: 600, margin: '0 auto 48px' }}>
-            Six full-time, scattered across Berlin, Austin, and Toronto. One food scientist on retainer. A long list of late-night testers in Discord.
+            Six full-time, scattered across Berlin, Austin, and Toronto. One food scientist on retainer. A long list of late-night testers in our community chat.
           </p>
           <div style={{ display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
             {['Late-night ops', 'Clean formulation', 'No VC strings', 'Carbon-neutral bottles', 'Recyclable everything'].map(v => (
@@ -182,7 +182,7 @@ function FAQPage() {
         <div className="container-narrow">
           <div className="eyebrow" style={{ marginBottom: 16 }}>// SUPPORT · FAQ</div>
           <h1 className="display-lg" style={{ marginBottom: 16 }}>Questions, <span style={{ color: 'var(--accent)' }}>answered.</span></h1>
-          <p className="body-lg">If we missed something, ping us in Discord — we read every message.</p>
+          <p className="body-lg">If we missed something, ping us in the community chat — we read every message.</p>
         </div>
       </section>
       <section data-level="Intel" style={{ paddingBottom: 120 }}>
@@ -203,12 +203,11 @@ function FAQPage() {
 
           <div className="card" style={{ marginTop: 56, textAlign: 'center', padding: 'clamp(24px, 6vw, 40px)' }}>
             <div className="h3" style={{ marginBottom: 12 }}>Still got questions?</div>
-            <p className="body" style={{ marginBottom: 24 }}>Drop into Discord or email us. We're online late.</p>
+            <p className="body" style={{ marginBottom: 24 }}>Email us anytime — we're online late.</p>
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-              <a className="btn btn-primary" href="https://discord.com" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-                <Icon name="discord" size={16}/> Join Discord
+              <a className="btn btn-primary" href="mailto:support@slimelime.gg" style={{ textDecoration: 'none' }}>
+                <Icon name="chat" size={16}/> support@slimelime.gg
               </a>
-              <a className="btn btn-secondary" href="mailto:support@slimelime.gg" style={{ textDecoration: 'none' }}>support@slimelime.gg</a>
             </div>
           </div>
         </div>

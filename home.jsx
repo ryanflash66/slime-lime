@@ -1008,7 +1008,7 @@ function Streamers() {
               {/* live indicator */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
                 <span className="hud-pill" style={{ fontSize: 10 }}><span className="dot"/>LIVE</span>
-                <Icon name="twitch" size={18}/>
+                <Icon name="play" size={18}/>
               </div>
               {/* avatar placeholder */}
               <div aria-hidden="true" style={{
