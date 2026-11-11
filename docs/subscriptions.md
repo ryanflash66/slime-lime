@@ -17,9 +17,10 @@ All three plans belong to one product, **Slime Lime Subscription Pack** (`type: 
 
 - one `REGULAR` billing cycle with `total_cycles: 0`, so it bills until the subscriber cancels;
 - a placeholder fixed price of 10.00 USD. The server must set the real pack price on each
-  subscription it creates (a plan override, priced by `priceCart`); the placeholder only applies
-  if a subscription has no override. Plan IDs are public, so a buyer could start a subscription
-  at the placeholder price from the JS SDK. Fulfillment must check the billed amount;
+  subscription it creates (a plan override, priced by `priceSubscription`); the placeholder only
+  applies if a subscription has no override. Plan IDs are public, so a buyer could start a
+  subscription at the placeholder price from the JS SDK. Fulfillment must check the billed amount
+  (see [Checking the billed amount](#checking-the-billed-amount-verifybilledamount));
 - `payment_preferences: { auto_bill_outstanding: true, payment_failure_threshold: 1 }`.
 
 ## How it works
@@ -82,3 +83,317 @@ to provision the plans up front. Otherwise the first subscription request provis
 - The PayPal REST app must have **Subscriptions** enabled (developer dashboard → app → Features).
   Without it, catalog and plan calls fail with `403 NOT_AUTHORIZED`, which the endpoint returns as
   `502` with the `debug_id`.
+- `SUB_SIGNING_SECRET` set in Vercel (any long random string) for `POST /api/paypal/subscriptions`.
+  Changing it invalidates every `sig` already handed out.
+
+## Creating a subscription
+
+`POST /api/paypal/subscriptions` (`api/paypal/subscriptions.js`) prices the pack on the server and
+creates the PayPal subscription the buyer then approves.
+
+Request:
+
+```json
+{
+  "lines": [{ "id": "lemon-lime", "qty": 6 }, { "id": "cherry", "qty": 4 }, { "id": "mango", "qty": 2 }],
+  "cadence": "monthly",
+  "attemptId": "a1b2c3d4"
+}
+```
+
+`attemptId` is optional: a client-generated ID (8 to 64 of `A-Z a-z 0-9 - _`) for one checkout
+attempt. The server hashes it with the cadence and the priced pack into the `PayPal-Request-Id`,
+so a retry of the same attempt gets the same subscription back instead of a second one, while the
+same attemptId with a different pack still creates a new one.
+
+`id` is a plain flavor id. The server adds the `--sub` suffix itself, so a subscription costs
+exactly what the same `--sub` lines cost in the cart: `priceSubscription(lines, cadence)` in
+`catalog.js` runs them through `priceCart(lines, { allowSubscription: true })` (1 to 20 lines,
+quantity 1 to 96, known cadence) and returns `{ totalCents, total, packCode }`.
+
+Without that option `priceCart` refuses any `--sub` line with a `400`. That is the one-time path
+(`POST /api/paypal/orders` and the concierge's `start_checkout`): PayPal can't bill a recurring
+pack and one-time bottles in one payment, so a subscription is only ever created here.
+
+The PayPal call is `POST /v1/billing/subscriptions` with:
+
+- `plan_id`: `ensurePlans()[cadence]`;
+- `plan: { billing_cycles: [{ sequence: 1, pricing_scheme: { fixed_price: { value: <total>, currency_code: "USD" } } }] }`,
+  the inline price override. It is always sent; without it PayPal would bill the 10.00 placeholder;
+- `custom_id`: the pack code (below);
+- `application_context: { brand_name: "Slime Lime", shipping_preference: "NO_SHIPPING", user_action: "SUBSCRIBE_NOW" }`.
+
+Response `201`:
+
+```json
+{ "subscriptionId": "I-…", "sig": "…", "total": "21.96", "cadence": "monthly" }
+```
+
+The subscription starts as `APPROVAL_PENDING`; the browser hands `subscriptionId` to the PayPal
+JS SDK for approval. `sig` is `base64url(HMAC-SHA256(SUB_SIGNING_SECRET, subscriptionId))`
+(`subsign.sign(id)` in `api/_lib/subsign.js`). Later calls that take a subscription ID from the
+browser should require the `sig` and check it with `subsign.verify(id, sig)`, which compares in
+constant time and returns `false` (never throws) on missing, malformed or wrong-length input.
+
+Errors: `400` for a bad pack or cadence, `405` for any method but `POST`, and `503` when
+`SUB_SIGNING_SECRET` (or the PayPal keys) is missing. The signing secret is checked before any
+PayPal call, so no unsigned subscription is ever created. The pack is validated before PayPal is
+called, so any PayPal error (even a 4xx such as `403 NOT_AUTHORIZED`) comes back as `502` with
+`paypal: { name, issue, debug_id }`, like `GET /api/paypal/plans`.
+
+Each call creates a new subscription. One the buyer never approves stays `APPROVAL_PENDING` and
+is never billed, so a retry or double click costs nothing.
+
+### In the browser
+
+The Fridge (`fridge.jsx`) shows two checkouts when the cart holds both kinds of line:
+"Start subscription · $X every <cadence>" for the crisper pack and "Pay with PayPal · $Y" for the
+one-time bottles. `useShellPayPalSub` in `shell.jsx` drives the first one on PayPal JS SDK v6:
+
+1. `shellLoadPayPal()` creates one SDK instance with
+   `components: ['paypal-payments', 'paypal-subscriptions']`; the hook checks
+   `findEligibleMethods({ paymentFlow: 'RECURRING_PAYMENT', currencyCode: 'USD' })` and creates
+   one `createPayPalSubscriptionPaymentSession({ onApprove, onCancel, onError })`.
+2. The click handler calls `session.start({ presentationMode: 'auto' }, promise)` synchronously
+   (so the popup isn't blocked), where `promise` is this endpoint's response mapped to
+   `{ subscriptionId }`. Each click gets a fresh `attemptId` (`crypto.randomUUID()`); a lost
+   response (network error or 5xx) is retried once with the same one.
+3. On approve, `slRecordSubscription` (`concierge.jsx`) stores
+   `{ kind: 'subscription', subscriptionId, sig, cadence, at, lines, total }` in
+   `localStorage['sl-orders']`, the subscribed crisper lines leave the cart, and a
+   `sl-concierge` event with `type: 'subscribed'` goes out. Cancel or error leaves the cart as is.
+
+### Pack codes (`custom_id`)
+
+The pack is stored on the subscription as a pack code: each line as a two-letter flavor code plus
+its quantity, joined with `.`, in the order given. For example `lm6.ch4.mg2` is 6 Lemon-Lime,
+4 Cherry Cool and 2 Mango Rush. Lines are not merged, so the code decodes to exactly the lines
+that were priced.
+
+| Flavor id    | Code |
+| ------------ | ---- |
+| `lemon-lime` | `lm` |
+| `cherry`     | `ch` |
+| `blue-rasp`  | `br` |
+| `mango`      | `mg` |
+| `grape`      | `gp` |
+| `watermelon` | `wm` |
+
+Codes live in `FLAVOR_CODES` in `catalog.js`. Never reuse or reassign one: a live subscription
+keeps its `custom_id` for as long as it bills. When a flavor is retired, leave its code in
+`FLAVOR_CODES`. A new flavor needs a new code; the module refuses to load if a flavor has no code
+or two flavors share one. `decodePackCode(code)` turns a code back into `[{ id, qty }]`, or returns
+`null` if it is malformed. The longest accepted pack (20 lines of 96) is 99 characters, inside
+PayPal's 127-character limit; `priceSubscription` refuses any pack whose code would be longer.
+
+`node scripts/check-sub-pricing.mjs` checks, over thousands of random packs and every cadence,
+that `priceSubscription` equals `priceCart` for the same `--sub` lines, that pack codes round-trip,
+and that the worst case fits in `custom_id`. Run it along with `node scripts/check-prices.mjs`
+before merging.
+
+## Checking the billed amount (`verifyBilledAmount`)
+
+Plan IDs are public and every plan carries the 10.00 USD placeholder. A buyer can skip our endpoint
+and start a subscription from the PayPal JS SDK on a plan ID, at the placeholder price or with an
+inline override and `custom_id` of their own. Such a subscription is real, and PayPal will bill it.
+So never trust a subscription's price or contents without checking them.
+
+`verifyBilledAmount(subscription, planIds?)` in `api/_lib/subscriptions.js` does that check. Pass
+it the result of `getSubscription(id)`, which calls
+`GET /v1/billing/subscriptions/{id}?fields=plan`. The `fields=plan` part matters: only then does
+PayPal include the subscription's effective `plan.billing_cycles`, where an inline override shows up
+as `pricing_scheme.fixed_price` (and `plan_overridden` is `true`). Without it there is nothing to
+compare, and the check fails.
+
+It resolves `{ ok: true, cadence, lines, packCode, expected }` only when:
+
+1. `custom_id` decodes to a pack (`decodePackCode`);
+2. `plan_id` is one of our cadence plans (`ensurePlans()`, or the `planIds` map you pass), which
+   gives the cadence;
+3. every billing cycle's `fixed_price` is in USD and equals `priceSubscription(pack, cadence).total`
+   (a cycle with no price, such as a free trial, fails);
+4. `quantity` is absent or `"1"`;
+5. `billing_info.last_payment.amount`, once PayPal has taken a payment, is that same amount.
+
+Otherwise it resolves `{ ok: false, reason, expected?, actual? }`. It only rejects when
+`ensurePlans()` cannot reach PayPal, so a caller can tell "wrong price" from "could not check".
+Without `planIds`, a cold instance runs the full `ensurePlans()` lookup first; pass `planIds` when
+you already have them.
+
+The check compares against **today's** prices and plans:
+
+- If you change a flavor price or a cadence discount, existing subscriptions keep billing their
+  old inline price and fail the check until they are moved to the new price (PayPal's
+  `POST /v1/billing/subscriptions/{id}/revise` with a new `plan` override). That is on purpose: they
+  no longer bill what the pack costs.
+- If you retire a flavor, its pack codes still decode, but `priceSubscription` refuses them.
+- If you replace a plan (rename it or bump `PROVISION_VERSION` in `plans.js`), subscriptions on the
+  old plan are "not on a Slime Lime plan". While they run out, pass `planIds` with an array per
+  cadence that includes the old plan IDs (for example `{ monthly: [newId, oldId], … }`).
+
+Plan these changes together with the subscriptions that are still billing.
+
+Status, manage and fulfillment code should check both: `sig` (this server created the
+subscription) and `verifyBilledAmount` (it bills what the pack costs). Do not fulfill a
+subscription that fails either one. The manage endpoint below requires the `sig` and reports the
+price check as `priceOk`.
+
+## Managing a subscription
+
+`POST /api/paypal/subscription-manage` (`api/paypal/subscription-manage.js`) lets the shopper, or
+the concierge acting for them, check, pause, resume or cancel a subscription this server created.
+
+Request:
+
+```json
+{ "subscriptionId": "I-…", "sig": "…", "action": "status" }
+```
+
+`action` is one of `status`, `pause`, `resume` or `cancel`. `sig` is the one
+`POST /api/paypal/subscriptions` returned with the ID. Holding it is the only proof that the
+caller started this subscription, so the browser keeps the two together.
+
+Checks, in order. Nothing reaches PayPal until all of them pass:
+
+| Problem                                                    | Response |
+| ---------------------------------------------------------- | -------- |
+| Any method but `POST`                                      | `405`    |
+| Body is not a JSON object                                  | `400`    |
+| `subscriptionId` does not match `/^I-[A-Z0-9]{6,32}$/`     | `400`    |
+| Unknown `action`                                           | `400`    |
+| `SUB_SIGNING_SECRET` missing                               | `503`    |
+| `sig` missing, or `subsign.verify(subscriptionId, sig)` fails | `403 { "error": "This subscription isn't linked to this browser." }` |
+
+### Status object
+
+Every successful call answers `200` with the subscription as it is now:
+
+```json
+{
+  "id": "I-…",
+  "status": "ACTIVE",
+  "cadence": "monthly",
+  "nextBillingTime": "2026-12-11T10:00:00Z",
+  "lastPayment": { "amount": "21.96", "time": "2026-11-11T12:01:00Z" },
+  "amount": "21.96",
+  "pack": [{ "id": "lemon-lime", "qty": 6 }, { "id": "cherry", "qty": 4 }, { "id": "mango", "qty": 2 }],
+  "priceOk": true
+}
+```
+
+- It comes from `getSubscription(id)`, which uses `?fields=plan` so the inline price override is
+  included.
+- `status` is PayPal's: `APPROVAL_PENDING`, `APPROVED`, `ACTIVE`, `SUSPENDED`, `CANCELLED` or
+  `EXPIRED`.
+- `cadence` is the cadence whose `ensurePlans()` plan ID matches `plan_id`, or `null` for a plan
+  that isn't ours.
+- `amount` is what PayPal bills each cycle: the `REGULAR` cycle's `fixed_price.value`, in USD,
+  always with cents (`"21.60"`, though PayPal sends `"21.6"`). `lastPayment` is `null` until PayPal takes a payment. `nextBillingTime` is `null` when PayPal
+  has none, for example before approval.
+- `pack` is `decodePackCode(custom_id)`, or `null` when `custom_id` is not a pack code.
+- `priceOk` is `verifyBilledAmount(subscription).ok`, checked against today's prices (see
+  [Checking the billed amount](#checking-the-billed-amount-verifybilledamount)). A subscription
+  someone created at their own price straight through the SDK still gets its status, flagged
+  `priceOk: false`, and can still be paused, resumed or cancelled. Never fulfill one that fails.
+
+The response is built from this allow-list only. Nothing from PayPal's `subscriber` (name, email,
+shipping address, payer ID) or any other field is passed through.
+
+### Actions
+
+| `action` | PayPal call                                    | `reason` sent                         | Allowed from |
+| -------- | ---------------------------------------------- | ------------------------------------- | ------------ |
+| `pause`  | `POST /v1/billing/subscriptions/{id}/suspend`  | `Paused by shopper via Slime Lime`    | `ACTIVE` |
+| `resume` | `POST /v1/billing/subscriptions/{id}/activate` | `Resumed by shopper via Slime Lime`   | `SUSPENDED` |
+| `cancel` | `POST /v1/billing/subscriptions/{id}/cancel`   | `Cancelled by shopper via Slime Lime` | `APPROVAL_PENDING`, `APPROVED`, `ACTIVE`, `SUSPENDED` |
+
+PayPal answers these with `204` and no body. The endpoint then reads the subscription again and
+returns the fresh status object. If that re-read fails, the change has still been made, so the
+answer is still `200`: the status object read before the action, with `status` set to the state
+the action leads to (`SUSPENDED`, `ACTIVE` or `CANCELLED`).
+
+The current state is checked before PayPal is called. A refused action is a `409`
+`{ "error": "…", "status": "<PayPal state>" }`:
+
+- anything on `CANCELLED` or `EXPIRED`: "This subscription has already ended."
+- `pause` when not `ACTIVE` (including `APPROVAL_PENDING`): "Only an active subscription can be paused."
+- `resume` when not `SUSPENDED`: "Only a paused subscription can be resumed."
+
+If the state changes between that read and PayPal's own check, PayPal answers
+`422 UNPROCESSABLE_ENTITY` with issue `SUBSCRIPTION_STATUS_INVALID`. The endpoint re-reads the
+subscription and returns the same friendly `409` for its new state.
+
+PayPal will not cancel a subscription nobody has approved yet. The sandbox answers
+`404 RESOURCE_NOT_FOUND` / `INVALID_RESOURCE_ID` for it, although the subscription exists. Cancel on
+`APPROVAL_PENDING` is still sent to PayPal, in case PayPal allows it, but that refusal becomes a
+`409` with status `APPROVAL_PENDING`: "This subscription hasn't been approved in PayPal yet, so
+there's nothing to cancel. It won't bill unless it's approved." Such a subscription is never
+billed unless the buyer approves it.
+
+Any other PayPal or network failure, including a different 4xx, is a `502` with
+`paypal: { name, issue, debug_id }` when PayPal sent one, like the other subscription endpoints.
+
+### Checking it
+
+`node scripts/check-subscription-manage.mjs` runs the handler against an in-memory PayPal. It
+covers the 405, 400, 403 and 503 checks (with no PayPal call), the status allow-list (a
+subscriber with name, email and address must not come back), `priceOk`, every action in every
+state, the `422` → `409` mapping and the `502`s. Run it along with the pricing checks before
+merging. Pausing and resuming a real sandbox subscription needs the sandbox buyer to approve it
+first.
+
+## The concierge's subscription tools
+
+Both endpoints are thin wrappers over `startSubscription` and `manageSubscription` in
+`api/_lib/subscriptions.js`. The Flavor Concierge (`api/_lib/concierge.js`) calls those two
+functions directly, not over HTTP, so it gets the same pricing, signing and `409` messages.
+
+| Tool                  | What it does |
+| --------------------- | ------------ |
+| `set_cadence`         | Prices the current pack on `biweekly`, `monthly` or `quarterly` with `priceSubscription` and returns the unit prices and per-delivery total. Starts nothing. |
+| `start_subscription`  | Needs a pack and a cadence. Calls `startSubscription` with the conversation id as `attemptId`, so a retry (or the fallback model) gets the same subscription. Returns `{ subscriptionId, total, cadence, next }` to the model; the `sig` goes only to the browser, in the response's `subscription` field. |
+| `subscription_status` | Read-only, no confirm. `manageSubscription(…, 'status')`, worded for the model (status, cadence, amount, next billing date, pack). With no id it picks the approved subscription, else the newest one created this visit. |
+| `pause_subscription`, `resume_subscription`, `cancel_subscription` | Change nothing. Each returns a pending action with a one-line summary of the effect; the agent reads it back and ends with "Say 'confirm' to go ahead." |
+
+**Sigs never reach the model.** The panel sends its subscriptions with each chat request:
+`subscriptions: [{ subscriptionId, sig, cadence, lines, at, approved }]`, the approved ones from
+`localStorage['sl-orders']` plus any the agent created this visit that PayPal hasn't approved yet.
+`cleanSubscriptions` keeps only entries whose `sig` verifies, and the tools act only on those. The
+model sees ids, cadences, packs and states, never a sig, and nothing logs one.
+
+**Confirming a change.** The chat response carries the pending action as
+`pending: { action, subscriptionId, summary, issuedAt, expiresInMs: 30000, token }`, where
+`token` is an HMAC (the `SUB_SIGNING_SECRET` key) over the action, id and `issuedAt`. The panel
+shows **Confirm pause** (or resume / cancellation) and a dismiss button. The shopper confirms
+with the button, the voice loop's `window.dispatchEvent(new CustomEvent('sl-confirm'))`, or by
+typing or saying "confirm" as the very next message. The next request then carries
+`confirm: { action, subscriptionId }` and the `pending` object. Before any model runs, the
+server checks that:
+
+1. the confirm matches the pending action exactly, and its token verifies;
+2. it is at most 30 s old (plus 5 s for the network);
+3. the last user message is a confirm on its own ("confirm", "yes confirm", "Confirm pause"…;
+   "don't confirm" is not);
+4. the subscription is in this request's verified `subscriptions`;
+5. the token hasn't been used yet (checked per warm instance, so a resent request can't run the
+   change twice).
+
+Only then does it call `manageSubscription`, which checks the sig again. It gets at most 15 s,
+inside the turn's time budget; if PayPal hasn't answered by then, the agent says it can't tell yet
+whether the change went through. The result goes to the
+model as "Confirmed change" and to the browser as `confirmed: { action, subscriptionId, ran, ok,
+status, error }`. A refused action passes its friendly message through, for example the `409`
+for cancelling a subscription nobody approved yet. Any other message, the dismiss button or 30 s
+of silence discards the pending action, and a confirm with nothing pending changes nothing. If
+every model then fails, the reply is built from the confirmed result instead of a `503`.
+
+Changing the size or cadence of a subscription isn't possible in place. The agent says so, then
+cancels the old one (with confirm) and starts a new one, which the shopper approves in PayPal
+again.
+
+**In the panel** (`concierge.jsx`), a `subscription` in the response shows
+"Subscribe with PayPal · $X every <cadence>". The button runs `useShellPayPalSub`'s
+`start(existing)` with the subscription the server already created, so nothing new is created.
+On approve, the panel records the `sl-orders` entry (`slRecordSubscription`), takes the pack out
+of the Fridge, emits `subscribed`, and sends "I approved the subscription." so the agent
+confirms.

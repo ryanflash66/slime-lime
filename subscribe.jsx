@@ -36,7 +36,7 @@ const SUB_PTS = { bottle: 10, stack: 40, rainbow: 60, all6: 100 };
 const subImg = id => `assets/bottle/renders/card-${id}.webp`;
 const subMoney = n => '$' + n.toFixed(2);
 // Discounted price of one bottle in cents, rounded per bottle exactly like unitCents() in
-// api/_lib/catalog.js, so the total shown here matches the Fridge and the PayPal order.
+// api/_lib/catalog.js, so the total shown here matches the Fridge and what the PayPal subscription bills.
 const subUnitCents = (dollars, save) => Math.round(Math.round(dollars * 100) * (100 - save) / 100);
 const subRand = (a, b) => a + Math.random() * (b - a);
 const subPick = arr => arr[Math.floor(Math.random() * arr.length)];
@@ -754,7 +754,7 @@ function SubscribePage({ onAdd, onSubscribe }) {
                 className={'btn btn-xl sb-cta' + (isFull ? ' btn-primary' : '')}>
                 {isFull ? <>Start subscription <Icon name="arrowR" size={16}/></> : `Stock ${remaining} more`}
               </button>
-              <div className="mono-sm sb-fine">CANCEL · PAUSE · SWAP ANYTIME · FREE SHIPPING</div>
+              <div className="mono-sm sb-fine">Billed {cad.label.toLowerCase()} by PayPal · pause or cancel anytime · free shipping</div>
             </div>
           </div>
         </div>

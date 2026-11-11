@@ -49,6 +49,10 @@
 <script type="module" src="bottle3d.js"></script>
 <script type="text/babel" src="shell.jsx"></script>
 <script type="text/babel" src="fridge.jsx"></script>
+<script type="text/babel" src="concierge.jsx"></script>
+<script type="text/babel" src="mode.jsx"></script>
+<script type="text/babel" src="voice.jsx"></script>
+<script type="text/babel" src="handsfree-fx.jsx"></script>
 <script type="text/babel" src="home.jsx"></script>
 <script type="text/babel" src="flagship.jsx"></script>
 <script type="text/babel" src="subscribe.jsx"></script>
@@ -77,7 +81,7 @@ function App() {
   return (
     <div>
       <window.Nav cartCount={cart.count} onCart={() => cart.setCartOpen(true)} route={url}/>
-      <div ref={pageRef}>{page}</div>
+      <div ref={pageRef} className="sl-page">{page}</div>
       <window.Footer/>
       <window.FridgeDrawer
         open={cart.cartOpen}
@@ -86,9 +90,18 @@ function App() {
         onSetQty={cart.setQty}
         onInc={cart.inc}
         onDec={cart.dec}
-        total={cart.total}
-        onPaid={cart.clear}
+        onPaid={(receipt, lines) => {
+          // Record and remove the lines this PayPal order was priced for, not whatever the cart holds now.
+          const paid = lines && lines.length ? lines : cart.cart.filter(i => !i.subscription).map(i => ({ id: i.id, qty: i.qty }));
+          window.slRecordOrder(receipt, paid);
+          cart.removePaid(paid);
+          // Retires any concierge checkout still waiting, so the same pack can't be paid twice.
+          window.dispatchEvent(new CustomEvent('sl-paid', { detail: { orderId: receipt.orderId, source: 'fridge' } }));
+        }}
       />
+      <window.HandsFreeStage cart={cart}/>
+      <window.Concierge cart={cart} fridgeOpen={cart.cartOpen}/>
+      <window.ModePicker/>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 // POST /api/paypal/orders
-// Body: { items: [{ id, qty, subscription? }] }
+// Body: { items: [{ id, qty }] }   (one-time bottles only)
 // Prices the cart on the server, creates a PayPal order, returns { orderId, total }.
+// A subscription ('--sub') line gets a 400: subscriptions go through POST /api/paypal/subscriptions.
 const { priceCart } = require('../_lib/catalog');
 const { createOrder, sendError, readJson } = require('../_lib/paypal');
 

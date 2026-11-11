@@ -4,7 +4,8 @@
 // behind), empty slots dimmed. Tap a bottle and it flies off the shelf into a close-up where the
 // real 3D bottle turns once; drag it to turn it yourself (it keeps your speed, then settles facing
 // front). Set the quantity or a pack size there; Back or Escape flies it home to the same slot.
-// Subscription packs sit in the crisper drawer.
+// Subscription packs sit in the crisper drawer and check out on their own: "Start subscription"
+// sets up a PayPal subscription (billed every cycle), "Pay with PayPal" pays for the bottles once.
 // Interaction model after "Product Shelf" by Aakash Mehra (aakashmehra.com), rebuilt for this
 // no-build React + GSAP-free stack with the site's WebGL bottle (bottle3d.js).
 const { useState: useStateF, useEffect: useEffectF, useRef: useRefF, useLayoutEffect: useLayoutEffectF } = React;
@@ -15,6 +16,17 @@ const FRIDGE_PACKS = [6, 12, 24];
 const fridgeImg = id => `assets/bottle/renders/card-${id}.webp`;
 const fridgePad = n => String(n).padStart(2, '0');
 const fridgeMoney = n => '$' + n.toFixed(2);
+// Whole cents per bottle, summed: the same total the subscribe page and the server compute.
+const fridgeCents = list => list.reduce((s, i) => s + Math.round(i.price * 100) * i.qty, 0);
+// "every <x>" for a cadence id, from SUB_CADENCES in subscribe.jsx ('Every month' -> 'month').
+const fridgeEvery = cadence => {
+  const c = typeof SUB_CADENCES !== 'undefined' && SUB_CADENCES.find(x => x.id === cadence);
+  return c ? c.label.replace(/^every\s+/i, '') : 'cycle';
+};
+const FRIDGE_STATUS_LINE = { font: '500 12px var(--font-mono)', textAlign: 'center', letterSpacing: '0.04em' };
+const FRIDGE_ROW_LABEL = { font: '500 14px var(--font-body)', color: 'var(--fg-2)' };
+const FRIDGE_ROW_VALUE = { font: '700 22px var(--font-mono)', color: 'var(--accent)' };
+const FRIDGE_ROW_VALUE_SM = { ...FRIDGE_ROW_VALUE, fontSize: 18 };
 
 // FLIP: play `el` from the box `from` to where it sits now (one transform, compositor only).
 function fridgeFlip(el, from, reduced, ms = 560) {
@@ -204,7 +216,7 @@ function FridgeDetail({ f, index, qty, onSetQty, onBack, flipFrom, reduced, back
   );
 }
 
-function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, total, onPaid }) {
+function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, onPaid }) {
   const flavors = window.FLAVORS;
   const panelRef = useRefF(null);
   const closeRef = useRefF(null);
@@ -218,12 +230,36 @@ function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, total, onP
   const viewRef = useRefF(view);
   viewRef.current = view;
   const reduced = shellUseMedia(SHELL_REDUCED_MOTION);
-  const pay = window.useShellPayPal({ active: open && items.length > 0, items, onPaid });
   const onCloseRef = useRefF(onClose);
   onCloseRef.current = onClose;
 
   const lines = items.filter(i => !i.subscription);
   const subs = items.filter(i => i.subscription);
+  // PayPal can't put one-time bottles and a recurring pack in one payment, so each gets its own
+  // checkout: "Pay with PayPal" for the bottles (Orders API), "Start subscription" for the
+  // crisper pack (Subscriptions API, approved once, billed every cycle).
+  const pay = window.useShellPayPal({
+    active: open && lines.length > 0, items: lines,
+    onPaid: (receipt, paid) => onPaid(receipt, paid && paid.length ? paid : lines.map(i => ({ id: i.id, qty: i.qty }))),
+  });
+  const sub = window.useShellPayPalSub({
+    active: open && subs.length > 0, items: subs,
+    onSubscribed: r => {
+      if (window.slRecordSubscription) window.slRecordSubscription(r);
+      // The pack now lives in PayPal: take exactly the subscribed bottles out of the crisper, so
+      // anything added while the PayPal window was open stays put.
+      (r.pack || []).forEach(l => {
+        const line = items.find(i => i.id === l.id);
+        if (line) onSetQty(line, line.qty - l.qty);
+      });
+      window.dispatchEvent(new CustomEvent('sl-concierge', { detail: {
+        type: 'subscribed', at: Date.now(), subscriptionId: r.subscriptionId, cadence: r.cadence, total: r.total, lines: r.lines,
+      } }));
+    },
+  });
+  const subCadence = subs.length ? subs[0].subscription : null;
+  const oneTotal = fridgeCents(lines) / 100;
+  const subTotal = fridgeCents(subs.filter(i => i.subscription === subCadence)) / 100;
   const qtyOf = id => { const l = lines.find(i => i.id === id); return l ? l.qty : 0; };
   const bottles = items.reduce((s, i) => s + i.qty, 0);
 
@@ -301,8 +337,21 @@ function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, total, onP
   const outMs = reduced ? 200 : 280;
   const dur = open ? inMs : outMs;
   const ease = reduced ? SHELL_EASE_OUT : SHELL_EASE_DRAWER;
-  const freeShip = total >= 40 || subs.length > 0;
-  const progress = Math.min(1, total / 40);
+  // One-time bottles ship free from $40; a subscription pack always ships free.
+  const freeShip = lines.length ? oneTotal >= 40 : subs.length > 0;
+  const progress = Math.min(1, oneTotal / 40);
+  const payBusy = ['loading', 'paying', 'capturing'].includes(pay.status);
+  const subBusy = ['loading', 'subscribing'].includes(sub.status);
+  // One PayPal window at a time: each button waits while the other checkout is in PayPal.
+  const payInFlight = ['paying', 'capturing'].includes(pay.status);
+  const subInFlight = sub.status === 'subscribing';
+  // One button per kind of line. An empty fridge keeps the (disabled) Pay button.
+  const showSub = subs.length > 0;
+  const showPay = lines.length > 0 || !showSub;
+  const subLine = sub.status === 'subscribed' && sub.receipt
+    ? `SUBSCRIBED · ${String(sub.receipt.cadence || '').toUpperCase()} · ID ${sub.receipt.subscriptionId}` : sub.message;
+  const payLine = pay.status === 'paid' && pay.receipt ? `PAID $${pay.receipt.amount} · ORDER ${pay.receipt.orderId}` : pay.message;
+  const env = pay.env || sub.env;
   const detail = view ? flavors.find(f => f.id === view) : null;
 
   const browse = () => {
@@ -351,13 +400,21 @@ function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, total, onP
         </div>
 
         <div className="fr-foot">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-            <span style={{ font: '500 14px var(--font-body)', color: 'var(--fg-2)' }}>Subtotal</span>
-            <span style={{ font: '700 22px var(--font-mono)', color: 'var(--accent)' }}>{fridgeMoney(total)}</span>
-          </div>
+          {showPay && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+              <span style={FRIDGE_ROW_LABEL}>{showSub ? 'One-time bottles' : 'Subtotal'}</span>
+              <span style={showSub ? FRIDGE_ROW_VALUE_SM : FRIDGE_ROW_VALUE}>{fridgeMoney(oneTotal)}</span>
+            </div>
+          )}
+          {showSub && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+              <span style={FRIDGE_ROW_LABEL}>Subscription · every {fridgeEvery(subCadence)}</span>
+              <span style={showPay ? FRIDGE_ROW_VALUE_SM : FRIDGE_ROW_VALUE}>{fridgeMoney(subTotal)}</span>
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: freeShip ? 14 : 10, font: '400 12px var(--font-mono)', color: 'var(--fg-3)', letterSpacing: '0.04em' }}>
             <span>SHIPPING</span>
-            <span>{freeShip ? 'FREE' : `${fridgeMoney(40 - total)} TO FREE`}</span>
+            <span>{freeShip ? 'FREE' : `${fridgeMoney(40 - oneTotal)} TO FREE`}</span>
           </div>
           {!freeShip && (
             <div aria-hidden="true" style={{ background: 'var(--ink-900)', borderRadius: 999, height: 4, overflow: 'hidden', marginBottom: 14 }}>
@@ -365,22 +422,51 @@ function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, total, onP
                 transform: `scaleX(${progress})`, transformOrigin: 'left', transition: `transform 220ms ${SHELL_EASE_OUT}` }}/>
             </div>
           )}
-          <button className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center' }}
-            disabled={items.length === 0 || !['ready', 'cancelled', 'error', 'paid'].includes(pay.status)}
-            aria-busy={['loading', 'paying', 'capturing'].includes(pay.status)}
-            onClick={pay.start}>
-            {pay.status === 'loading' ? 'Loading PayPal…'
-              : pay.status === 'paying' ? 'Waiting for PayPal…'
-              : pay.status === 'capturing' ? 'Confirming payment…'
-              : pay.status === 'unavailable' || pay.status === 'failed' ? 'Checkout offline'
-              : <>Pay with PayPal · {fridgeMoney(total)}</>}
-          </button>
-          <div role="status" aria-live="polite" style={{
-            font: '500 12px var(--font-mono)', color: pay.status === 'paid' ? 'var(--accent)' : 'var(--fg-2)',
-            textAlign: 'center', letterSpacing: '0.04em', marginTop: pay.message || pay.status === 'paid' ? 10 : 0 }}>
-            {pay.status === 'paid' && pay.receipt ? `PAID $${pay.receipt.amount} · ORDER ${pay.receipt.orderId}` : pay.message}
-          </div>
-          {pay.env === 'sandbox' && (
+
+          {showSub && (
+            <>
+              <button type="button" className="btn btn-primary btn-lg fr-sub-btn" style={{ width: '100%', justifyContent: 'center' }}
+                disabled={payInFlight || !['ready', 'cancelled', 'error', 'subscribed'].includes(sub.status)}
+                aria-busy={subBusy}
+                onClick={() => sub.start()}>
+                {sub.status === 'loading' ? 'Loading PayPal…'
+                  : sub.status === 'subscribing' ? 'Waiting for PayPal…'
+                  : sub.status === 'unavailable' ? 'Subscriptions offline'
+                  : <>Start subscription · {fridgeMoney(subTotal)} every {fridgeEvery(subCadence)}</>}
+              </button>
+              <div style={{ font: '400 11px var(--font-mono)', color: 'var(--fg-3)', textAlign: 'center', marginTop: 8, letterSpacing: '0.04em' }}>
+                Billed every {fridgeEvery(subCadence)} by PayPal · pause or cancel anytime
+              </div>
+            </>
+          )}
+          {(showSub || sub.status === 'subscribed') && (
+            <div role="status" aria-live="polite" className="fr-sub-status" style={{ ...FRIDGE_STATUS_LINE,
+              color: sub.status === 'subscribed' ? 'var(--accent)' : 'var(--fg-2)',
+              marginTop: subLine ? 10 : 0, marginBottom: subLine && showPay ? 4 : 0 }}>
+              {subLine}
+            </div>
+          )}
+
+          {showPay && (
+            <button type="button" className={'btn btn-lg fr-pay-btn ' + (showSub ? 'btn-secondary' : 'btn-primary')}
+              style={{ width: '100%', justifyContent: 'center', marginTop: showSub ? 12 : 0 }}
+              disabled={lines.length === 0 || subInFlight || !['ready', 'cancelled', 'error', 'paid'].includes(pay.status)}
+              aria-busy={payBusy}
+              onClick={() => pay.start()}>
+              {pay.status === 'loading' ? 'Loading PayPal…'
+                : pay.status === 'paying' ? 'Waiting for PayPal…'
+                : pay.status === 'capturing' ? 'Confirming payment…'
+                : pay.status === 'unavailable' || pay.status === 'failed' ? 'Checkout offline'
+                : <>Pay with PayPal · {fridgeMoney(oneTotal)}</>}
+            </button>
+          )}
+          {(showPay || pay.status === 'paid') && (
+            <div role="status" aria-live="polite" className="fr-pay-status" style={{ ...FRIDGE_STATUS_LINE,
+              color: pay.status === 'paid' ? 'var(--accent)' : 'var(--fg-2)', marginTop: payLine ? 10 : 0 }}>
+              {payLine}
+            </div>
+          )}
+          {env === 'sandbox' && (
             <div style={{ font: '400 11px var(--font-mono)', color: 'var(--fg-4)', textAlign: 'center', marginTop: 10, letterSpacing: '0.06em' }}>
               PAYPAL SANDBOX · TEST MONEY ONLY
             </div>
