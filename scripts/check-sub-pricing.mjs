@@ -4,7 +4,8 @@
 // Run before every merge: node scripts/check-sub-pricing.mjs
 //
 // priceSubscription() (what PayPal bills each cycle) must cost exactly what priceCart() charges
-// for the same pack as '--sub' cart lines. This script checks that over many random packs and
+// for the same pack as '--sub' cart lines (priced with { allowSubscription: true }; the one-time
+// Orders path refuses '--sub' lines, which this script also checks). This script checks that over many random packs and
 // every cadence, and that each packCode (stored in the subscription's custom_id) decodes back to
 // the same pack, re-prices to the same total, and stays within PayPal's 127-character limit,
 // including for the longest pack the server accepts. It also checks that bad packs are refused.
@@ -80,6 +81,7 @@ let failures = 0;
 const report = (msg) => { failures++; if (problems.length < 50) problems.push(`  ${msg}`); };
 
 const show = (lines) => JSON.stringify(lines);
+const SUB = { allowSubscription: true };
 const sameLines = (a, b) => Array.isArray(b) && a.length === b.length
   && a.every((l, i) => l.id === b[i].id && Number(l.qty) === b[i].qty);
 
@@ -91,7 +93,7 @@ function checkPack(lines, cadence) {
     report(`${cadence} ${show(lines)}: priceSubscription threw "${e.message}"`);
     return;
   }
-  const cart = priceCart(lines.map((l) => ({ id: `${l.id}--sub`, qty: l.qty, subscription: cadence })));
+  const cart = priceCart(lines.map((l) => ({ id: `${l.id}--sub`, qty: l.qty, subscription: cadence })), SUB);
   if (sub.totalCents !== cart.totalCents || sub.total !== cart.total) {
     report(`${cadence} ${show(lines)}: priceSubscription ${sub.total} (${sub.totalCents}c) != priceCart ${cart.total} (${cart.totalCents}c)`);
   }
@@ -168,10 +170,22 @@ expect400('null line', () => priceSubscription([null], cadenceIds[0]));
 for (const name of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
   expect400(`prototype cadence "${name}"`, () => priceSubscription([ok], name));
   expect400(`prototype flavor "${name}"`, () => priceSubscription([{ id: name, qty: 6 }], cadenceIds[0]));
-  expect400(`priceCart prototype cadence "${name}"`, () => priceCart([{ id: `${flavorIds[0]}--sub`, qty: 6, subscription: name }]));
+  expect400(`priceCart prototype cadence "${name}"`, () => priceCart([{ id: `${flavorIds[0]}--sub`, qty: 6, subscription: name }], SUB));
   expect400(`priceCart prototype flavor "${name}"`, () => priceCart([{ id: name, qty: 6 }]));
-  expect400(`priceCart prototype sub flavor "${name}"`, () => priceCart([{ id: `${name}--sub`, qty: 6, subscription: cadenceIds[0] }]));
+  expect400(`priceCart prototype sub flavor "${name}"`, () => priceCart([{ id: `${name}--sub`, qty: 6, subscription: cadenceIds[0] }], SUB));
 }
+
+// The one-time Orders path (priceCart without the option) refuses every '--sub' line, alone or
+// mixed with one-time bottles, and still prices plain lines.
+for (const cadence of cadenceIds) {
+  expect400(`priceCart one-time with a ${cadence} --sub line`, () => priceCart([{ id: `${flavorIds[0]}--sub`, qty: 6, subscription: cadence }]));
+  expect400(`priceCart one-time mixed with a ${cadence} --sub line`, () => priceCart([ok, { id: `${flavorIds[1]}--sub`, qty: 6, subscription: cadence }]));
+}
+expect400('priceCart one-time --sub line without cadence', () => priceCart([{ id: `${flavorIds[0]}--sub`, qty: 6 }]));
+try {
+  const plain = priceCart([ok, { id: flavorIds[1], qty: 2 }]);
+  if (plain.totalCents !== FLAVOR_PRICES[flavorIds[0]].cents * 6 + FLAVOR_PRICES[flavorIds[1]].cents * 2) report(`priceCart one-time total ${plain.total} is wrong`);
+} catch (e) { report(`priceCart one-time plain lines threw "${e.message}"`); }
 
 // Malformed pack codes decode to null and never throw.
 for (const bad of ['', 'lm', 'lm0', 'lm06', 'zz6', 'lm6.', '.lm6', 'lm6..ch4', 'LM6', 'lm6,ch4', 'lm-1', 'lm1000', 'x'.repeat(200), null, 42, {}]) {

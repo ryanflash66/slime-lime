@@ -44,8 +44,11 @@ function centsToValue(cents) {
 }
 
 // Turns the client's cart lines into priced line items, or throws a 400-style error.
-// Accepts lines like { id: 'mango', qty: 3 } or { id: 'mango--sub', qty: 6, subscription: 'monthly' }.
-function priceCart(lines) {
+// Accepts one-time lines like { id: 'mango', qty: 3 }. Subscription ('--sub') lines are billed by
+// PayPal Subscriptions (POST /api/paypal/subscriptions), never as part of a one-time order, so they
+// are refused unless the caller passes { allowSubscription: true }. Only priceSubscription does:
+// it prices a pack as the matching '--sub' lines, e.g. { id: 'mango--sub', qty: 6, subscription: 'monthly' }.
+function priceCart(lines, { allowSubscription = false } = {}) {
   if (!Array.isArray(lines) || lines.length === 0) throw badRequest('Cart is empty.');
   if (lines.length > MAX_LINES) throw badRequest('Too many cart lines.');
 
@@ -55,6 +58,9 @@ function priceCart(lines) {
   for (const line of lines) {
     if (!line || typeof line.id !== 'string') throw badRequest('Each cart line needs an id.');
     const isSub = line.id.endsWith('--sub');
+    if (isSub && !allowSubscription) {
+      throw badRequest(`${line.id} is a subscription line. Subscriptions are billed by PayPal Subscriptions, not in a one-time order: start it with POST /api/paypal/subscriptions.`);
+    }
     const flavorId = isSub ? line.id.slice(0, -'--sub'.length) : line.id;
     const cadenceId = isSub ? line.subscription : null;
     if (isSub && !has(CADENCES, cadenceId)) throw badRequest(`Unknown subscription cadence for ${line.id}.`);
@@ -119,7 +125,7 @@ function priceSubscription(lines, cadence) {
   }
   const { totalCents, total } = priceCart(lines.map((l) => (
     l && typeof l.id === 'string' ? { id: `${l.id}--sub`, qty: l.qty, subscription: cadence } : l
-  )));
+  )), { allowSubscription: true });
   const packCode = lines.map((l) => `${FLAVOR_CODES[l.id]}${Number(l.qty)}`).join('.');
   if (packCode.length > CUSTOM_ID_MAX) throw badRequest('Too many items for one subscription.');
   return { totalCents, total, packCode };

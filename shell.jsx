@@ -185,10 +185,20 @@ function shellLoadPayPal() {
     const { clientId, env } = await res.json();
     const host = env === 'live' ? 'https://www.paypal.com' : 'https://www.sandbox.paypal.com';
     if (!window.paypal || !window.paypal.createInstance) await shellLoadScript(`${host}/web-sdk/v6/core`);
-    const sdk = await window.paypal.createInstance({ clientId, components: ['paypal-payments'], pageType: 'cart' });
+    // One instance serves both checkouts: one-time orders ('paypal-payments') and the crisper
+    // drawer's recurring pack ('paypal-subscriptions'). If the subscriptions component can't load,
+    // one-time checkout still works; useShellPayPalSub then reports subscriptions as offline.
+    let sdk, subsFailed = false;
+    try {
+      sdk = await window.paypal.createInstance({ clientId, components: ['paypal-payments', 'paypal-subscriptions'], pageType: 'cart' });
+    } catch (e) {
+      console.warn('[paypal] subscriptions component unavailable, one-time checkout only:', e && e.message);
+      sdk = await window.paypal.createInstance({ clientId, components: ['paypal-payments'], pageType: 'cart' });
+      subsFailed = true;
+    }
     const methods = await sdk.findEligibleMethods({ currencyCode: 'USD' });
     if (!methods.isEligible('paypal')) throw Object.assign(new Error('PayPal is not available here'), { unavailable: true });
-    return { sdk, env };
+    return { sdk, env, subsFailed };
   })();
   // Let a later open retry after a failure.
   shellPayPalPromise.catch(() => { shellPayPalPromise = null; });
@@ -271,7 +281,9 @@ function useShellPayPal({ active, items, onPaid }) {
     const existing = typeof existingOrderId === 'string';
     const lines = existing
       ? (existingLines || []).map(l => ({ id: l.id, qty: l.qty }))
-      : itemsRef.current.map(i => ({ id: i.id, qty: i.qty, subscription: i.subscription || undefined }));
+      // One-time bottles only: subscription lines are billed by useShellPayPalSub, and the
+      // Orders API refuses them.
+      : itemsRef.current.filter(i => !i.subscription && !/--sub$/.test(i.id)).map(i => ({ id: i.id, qty: i.qty }));
     pendingRef.current = { orderId: existing ? existingOrderId : null, lines };
     const orderPromise = (existing
       ? Promise.resolve({ orderId: existingOrderId })
@@ -285,6 +297,143 @@ function useShellPayPal({ active, items, onPaid }) {
         throw e;
       });
     Promise.resolve(session.start({ presentationMode: 'auto' }, orderPromise)).catch(() => {});
+  };
+
+  return { ...state, start };
+}
+
+// ─────────────────────────────────────────────────────────────
+// PAYPAL (sandbox) SUBSCRIPTION: the crisper drawer's pack, billed every cycle by PayPal.
+// The browser sends plain flavor ids + quantities and the cadence; POST /api/paypal/subscriptions
+// prices the pack on the server and creates the subscription, which the shopper approves once in
+// the PayPal popup (JS SDK v6 'paypal-subscriptions' component).
+// ─────────────────────────────────────────────────────────────
+let shellSubEligiblePromise = null;
+
+// Resolves the SDK for subscriptions, or rejects with { unavailable: true } when this PayPal
+// account / buyer can't start a recurring payment here.
+function shellLoadPayPalSub() {
+  if (shellSubEligiblePromise) return shellSubEligiblePromise;
+  const loading = shellLoadPayPal();
+  shellSubEligiblePromise = loading.then(async ({ sdk, env, subsFailed }) => {
+    if (subsFailed) {
+      // Maybe a blip: drop the payments-only instance so the next try loads both components again.
+      if (shellPayPalPromise === loading) shellPayPalPromise = null;
+      throw new Error('PayPal subscriptions failed to load');
+    }
+    if (typeof sdk.createPayPalSubscriptionPaymentSession !== 'function') {
+      throw Object.assign(new Error('PayPal subscriptions are not available here'), { unavailable: true });
+    }
+    const methods = await sdk.findEligibleMethods({ paymentFlow: 'RECURRING_PAYMENT', currencyCode: 'USD' });
+    if (!methods.isEligible('paypal')) throw Object.assign(new Error('PayPal subscriptions are not available here'), { unavailable: true });
+    return { sdk, env };
+  });
+  shellSubEligiblePromise.catch(() => { shellSubEligiblePromise = null; });
+  return shellSubEligiblePromise;
+}
+
+// One checkout attempt: 8-64 of [A-Za-z0-9_-] (a UUID keeps its dashes).
+const shellAttemptId = () => (window.crypto && crypto.randomUUID
+  ? crypto.randomUUID()
+  : `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`);
+
+// Create the subscription, retrying once when the answer is lost (network error or 5xx). The same
+// attemptId keys PayPal-Request-Id on the server, so the retry gets the same subscription back.
+async function shellCreateSubscription(body) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await shellPostJson('/api/paypal/subscriptions', body);
+    } catch (e) {
+      if (attempt >= 1 || (e.status && (e.status < 500 || e.status === 503))) throw e;
+      await new Promise(r => setTimeout(r, 700));
+    }
+  }
+}
+
+// status: idle | loading | ready | subscribing | subscribed | cancelled | error | unavailable
+// `items` are the cart's subscription lines (ids end in '--sub', each with .subscription = cadence).
+// onSubscribed({ subscriptionId, sig, cadence, total, lines, pack }) runs once PayPal approves;
+// lines are plain [{ id, qty }], pack the same lines as cart lines ([{ id: '…--sub', qty }]).
+function useShellPayPalSub({ active, items, onSubscribed }) {
+  const [state, setState] = useState({ status: 'idle', env: null, message: '', receipt: null });
+  const sessionRef = useRef(null);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const onSubscribedRef = useRef(onSubscribed);
+  onSubscribedRef.current = onSubscribed;
+  // What the pending PayPal subscription was created for, filled in as the server answers.
+  const pendingRef = useRef(null); // { lines, pack, cadence, attemptId, subscriptionId?, sig?, total? }
+
+  useEffect(() => {
+    if (!active || sessionRef.current) return;
+    let alive = true;
+    setState(s => ({ ...s, status: 'loading', message: '' }));
+    shellLoadPayPalSub().then(({ sdk, env }) => {
+      if (!alive) return;
+      sessionRef.current = sdk.createPayPalSubscriptionPaymentSession({
+        onApprove: data => {
+          const pending = pendingRef.current;
+          pendingRef.current = null;
+          const subscriptionId = (data && data.subscriptionId) || (pending && pending.subscriptionId);
+          if (!pending || !subscriptionId) {
+            setState(s => ({ ...s, status: 'error', message: 'PayPal approved, but the subscription could not be confirmed here.' }));
+            return;
+          }
+          // The signature only vouches for the id the server created.
+          const sig = pending.subscriptionId === subscriptionId ? pending.sig : null;
+          const receipt = { subscriptionId, sig, cadence: pending.cadence, total: pending.total, lines: pending.lines, pack: pending.pack };
+          setState(s => ({ ...s, status: 'subscribed', receipt, message: '' }));
+          // Outside the approval path: PayPal has the subscription, whatever the bookkeeping does.
+          try { if (onSubscribedRef.current) onSubscribedRef.current(receipt); }
+          catch (err) { console.error('[paypal] after-subscription step failed:', err); }
+        },
+        onCancel: () => {
+          pendingRef.current = null;
+          setState(s => ({ ...s, status: 'cancelled', message: 'Subscription not started. Your pack is still in the crisper.' }));
+        },
+        onError: () => {
+          pendingRef.current = null;
+          // Keep the server's reason when creating the subscription is what failed.
+          setState(s => (s.status === 'error' && s.message ? s
+            : { ...s, status: 'error', message: 'PayPal hit an error. Your pack is still in the crisper. Try again.' }));
+        },
+      });
+      setState(s => ({ ...s, status: 'ready', env }));
+    }).catch(e => {
+      if (!alive) return;
+      setState(s => ({ ...s, status: e.unavailable ? 'unavailable' : 'error',
+        message: e.unavailable ? 'Subscriptions are offline on this host' : 'PayPal failed to load. Reopen the fridge to retry.' }));
+    });
+    return () => { alive = false; };
+  }, [active]);
+
+  // Called straight from the click handler, so the popup opens on the click's user activation
+  // while the server creates the subscription.
+  const start = () => {
+    const session = sessionRef.current;
+    if (!session) return;
+    const subs = itemsRef.current.filter(i => i && i.subscription && i.qty > 0);
+    if (!subs.length) return;
+    // A cart holds one subscription pack (one cadence); lines on another cadence stay put.
+    const cadence = subs[0].subscription;
+    const pack = subs.filter(i => i.subscription === cadence);
+    const lines = pack.map(i => ({ id: i.id.replace(/--sub$/, ''), qty: i.qty }));
+    const attemptId = shellAttemptId();
+    const pending = { lines, pack: pack.map(i => ({ id: i.id, qty: i.qty })), cadence, attemptId };
+    pendingRef.current = pending;
+    setState(s => ({ ...s, status: 'subscribing', message: '', receipt: null }));
+    const subscriptionPromise = shellCreateSubscription({ lines, cadence, attemptId })
+      .then(d => {
+        if (!d || typeof d.subscriptionId !== 'string' || !d.subscriptionId) throw new Error('PayPal did not return a subscription.');
+        Object.assign(pending, { subscriptionId: d.subscriptionId, sig: d.sig || null, total: d.total || null });
+        return { subscriptionId: d.subscriptionId };
+      })
+      .catch(e => {
+        if (pendingRef.current === pending) pendingRef.current = null;
+        setState(s => ({ ...s, status: 'error', message: e.message || 'Could not start the subscription' }));
+        throw e;
+      });
+    Promise.resolve(session.start({ presentationMode: 'auto' }, subscriptionPromise)).catch(() => {});
   };
 
   return { ...state, start };
@@ -929,5 +1078,5 @@ function PageBottomCTA({ onAdd, label = "Add to fridge", price = "$2.50/bottle" 
 // ─────────────────────────────────────────────────────────────
 Object.assign(window, {
   Icon, Wordmark, Nav, Footer, Can, PageBottomCTA,
-  useFlavorTheme, useCart, useRoute, useRouteStage, navTo, FLAVORS, useShellPayPal,
+  useFlavorTheme, useCart, useRoute, useRouteStage, navTo, FLAVORS, useShellPayPal, useShellPayPalSub,
 });
