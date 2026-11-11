@@ -54,6 +54,12 @@ function money(m) {
   return m && m.value != null ? `${m.value} ${m.currency_code || '?'}` : 'nothing';
 }
 
+// The cadence whose plan is `planId`, or null. `planIds` is { cadence: planId or [planId, ...] }.
+function cadenceForPlan(planId, planIds) {
+  if (typeof planId !== 'string' || !planId || !planIds) return null;
+  return Object.keys(planIds).find((c) => [].concat(planIds[c]).includes(planId)) || null;
+}
+
 // Checks that a subscription bills exactly what its pack costs.
 //
 // `subscription` is a GET /v1/billing/subscriptions/{id}?fields=plan response (getSubscription).
@@ -77,11 +83,7 @@ async function verifyBilledAmount(subscription, planIds) {
   const lines = decodePackCode(subscription.custom_id);
   if (!lines) return fail('custom_id is not a pack code.');
 
-  const ids = planIds || await ensurePlans();
-  const planId = subscription.plan_id;
-  const cadence = typeof planId === 'string' && planId
-    ? Object.keys(ids).find((c) => [].concat(ids[c]).includes(planId))
-    : undefined;
+  const cadence = cadenceForPlan(subscription.plan_id, planIds || await ensurePlans());
   if (!cadence) return fail('Subscription is not on a Slime Lime plan.');
 
   let priced;
@@ -118,4 +120,4 @@ async function verifyBilledAmount(subscription, planIds) {
   return { ok: true, cadence, lines, packCode: priced.packCode, expected };
 }
 
-module.exports = { createSubscription, getSubscription, verifyBilledAmount };
+module.exports = { createSubscription, getSubscription, verifyBilledAmount, cadenceForPlan };
