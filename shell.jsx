@@ -37,8 +37,8 @@ function Icon({ name, size = 20, stroke = 1.75 }) {
     flame:  <path d="M12 2c1 4 4 5 4 9a4 4 0 11-8 0c0-2 1-3 1-5 2 1 3 0 3-4z"/>,
     drop:   <path d="M12 2s6 7 6 12a6 6 0 11-12 0c0-5 6-12 6-12z"/>,
     leaf:   <><path d="M11 20A7 7 0 014 13c0-7 7-11 16-11 0 9-4 16-11 16z"/><path d="M2 22l8-8"/></>,
-    twitch: <path d="M4 3v15l4 3v-3h4l5-5V3H4zm10 8l-3 3v-3H8V5h10v6h-4z"/>,
-    discord:<path d="M19 5a14 14 0 00-3.5-1l-.2.4A11 11 0 0112 4a11 11 0 00-3.3.4L8.5 4A14 14 0 005 5C2 9 1.5 14 2 19c1.5 1 3 1.7 4.6 2l1-1.4a8 8 0 01-1.6-.8l.4-.3a10 10 0 0011.2 0l.4.3a8 8 0 01-1.6.8L17.4 21c1.5-.3 3-1 4.5-2 .6-5-.5-10-3-15zM9 16c-1 0-1.7-.9-1.7-2s.7-2 1.7-2 1.7.9 1.7 2-.7 2-1.7 2zm6 0c-1 0-1.7-.9-1.7-2s.7-2 1.7-2 1.7.9 1.7 2-.7 2-1.7 2z"/>,
+    chat:   <><path d="M5 4h14a2 2 0 012 2v9a2 2 0 01-2 2h-7l-5 4v-4H5a2 2 0 01-2-2V6a2 2 0 012-2z"/><path d="M8 10.5h.01M12 10.5h.01M16 10.5h.01"/></>,
+    play:   <><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 9.5v5l4.5-2.5z"/></>,
     shield: <path d="M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6l8-4z"/>,
     target: <><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/></>,
     pause:  <><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></>,
@@ -792,7 +792,7 @@ function Footer() {
               Healthy gaming drinks. Built for focus, hydration, and the long session.
             </p>
             <div style={{ display: 'flex', gap: 8, marginTop: 24 }}>
-              {[['twitch', 'Twitch'], ['discord', 'Discord']].map(([s, label]) => (
+              {[['chat', 'Community chat'], ['play', 'Live streams']].map(([s, label]) => (
                 <button key={s} className="iconbtn" aria-label={label} style={{ width: 36, height: 36 }}>
                   <Icon name={s} size={16}/>
                 </button>
