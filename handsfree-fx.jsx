@@ -83,7 +83,9 @@ function hfVoiceState() {
 
 // Sentences, split only where end punctuation is followed by a space ("$21.60" stays whole), and
 // not after a list number ("2. Mango") or a title ("Dr. Pepper").
-const HF_NO_SPLIT = /(^|\s)(\d{1,2}|dr|mr|mrs|ms|st|vs|no|e\.g|i\.e)$/i;
+// A number only counts as a list marker at the start of a line: "Your pack of 12. Say 'confirm'…"
+// still splits after "12.".
+const HF_NO_SPLIT = /((^|\s)(dr|mr|mrs|ms|st|vs|e\.g|i\.e)|(^|\n)\s*\d{1,2})$/i;
 function hfSentences(text) {
   const out = [];
   const re = /[.!?…]+["'”’)]*\s+/g;
