@@ -217,7 +217,7 @@ function FridgeDetail({ f, index, qty, onSetQty, onBack, flipFrom, reduced, back
   );
 }
 
-function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, onPaid }) {
+function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, onPaid, onEmpty, onRestore }) {
   const flavors = window.FLAVORS;
   const panelRef = useRefF(null);
   const closeRef = useRefF(null);
@@ -263,6 +263,18 @@ function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, onPaid }) 
   const subTotal = fridgeCents(subs.filter(i => i.subscription === subCadence)) / 100;
   const qtyOf = id => { const l = lines.find(i => i.id === id); return l ? l.qty : 0; };
   const bottles = items.reduce((s, i) => s + i.qty, 0);
+
+  // Empty fridge: one tap takes every bottle out, the subscription pack too. Undo puts them back
+  // for a few seconds, only while the Fridge is still empty and open.
+  const [undo, setUndo] = useStateF(null);
+  useEffectF(() => {
+    if (!undo) return;
+    const t = setTimeout(() => setUndo(null), 6000);
+    return () => clearTimeout(t);
+  }, [undo]);
+  useEffectF(() => { if (!open || bottles > 0) setUndo(null); }, [open, bottles > 0]);
+  const emptyFridge = () => { setUndo(items.map(i => ({ ...i }))); onEmpty(); };
+  const undoEmpty = () => { if (undo) onRestore(undo); setUndo(null); };
 
   const openDetail = (f, imgEl) => {
     flipRef.current = imgEl ? imgEl.getBoundingClientRect() : null;
@@ -388,6 +400,13 @@ function FridgeDrawer({ open, items, onClose, onSetQty, onInc, onDec, onPaid }) 
         <div className="fr-status">
           <span aria-hidden="true" className="fr-status-dot"/>
           <span>STATUS: {bottles ? 'STOCKED' : 'EMPTY'} · {bottles} {bottles === 1 ? 'BOTTLE' : 'BOTTLES'} CHILLING</span>
+          {/* Same element for both, so focus stays on it after emptying. */}
+          {bottles > 0 ? (
+            <button type="button" className="fr-empty-btn" onClick={emptyFridge}
+              disabled={payInFlight || subInFlight} aria-label={`Empty fridge: remove all ${bottles} bottles`}>Empty fridge</button>
+          ) : undo ? (
+            <button type="button" className="fr-empty-btn" onClick={undoEmpty} aria-label="Undo: put the bottles back">Undo</button>
+          ) : null}
         </div>
 
         <div className="fr-body thin-scroll" key={view || 'shelves'}>

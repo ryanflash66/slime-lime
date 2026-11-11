@@ -689,6 +689,10 @@ html { scroll-behavior: smooth; }
 .fr-head { display: flex; justify-content: space-between; align-items: center; }
 .fr-status { display: flex; align-items: center; gap: 8px; margin: 16px 0 10px; padding: 8px 12px; border: 1px solid var(--border-1); border-radius: 12px; background: var(--ink-900); font: 500 11px var(--font-mono); letter-spacing: 0.08em; color: var(--fg-3); }
 .fr-status-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); flex: none; }
+.fr-empty-btn { margin: -4px -6px -4px auto; flex: none; padding: 6px 10px; border: 1px solid var(--border-1); border-radius: 8px; background: none; color: var(--fg-2); font: 500 11px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; cursor: pointer; transition: color 160ms ease-out, border-color 160ms ease-out; }
+.fr-empty-btn:hover:not(:disabled) { color: var(--fg-1); border-color: var(--fg-3); }
+.fr-empty-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fr-empty-btn:disabled { opacity: 0.4; cursor: default; }
 .fr-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; margin: 0 -8px; padding: 6px 8px 10px; overscroll-behavior: contain; }
 
 .fr-row { margin-top: 18px; }
