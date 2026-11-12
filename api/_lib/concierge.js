@@ -6,6 +6,8 @@
 //   reorder_usual   "get my usual". With a live subscription in this device's history it builds
 //                   nothing and the agent offers an extra one-time pack of it (extraPack: true
 //                   builds that); otherwise it rebuilds the newest past order for checkout.
+//   empty_fridge    "empty my cart": the browser takes every bottle out of the Fridge, the
+//                   subscription pack too. A subscription already running in PayPal is untouched.
 //   get_order       PayPal Agent Toolkit, used to confirm an order or answer "where's my order".
 //                   Only orders in this browser's own history can be looked up, and only a
 //                   summary (status, amount, items) reaches the model, never payer details.
@@ -125,6 +127,7 @@ function systemPrompt(currentPack, history, fridgeNote, openCheckout, subs = [])
     '   - If they then say yes to the extra pack, call reorder_usual with extraPack: true, then start_checkout, then give the total and tell them to tap the PayPal button below.',
     '   - If it returns a rebuilt pack instead, the shopper already asked to buy it: call start_checkout right away in the same turn, then say what is in it with the returned total and tell them to tap the PayPal button below.',
     '7. If they ask where their order is, what they got, or how their subscription is doing, call get_order with no id: it returns the newest order on this device and the subscription status. Answer in one or two lines from what it returns (status, items, amount, next delivery date).',
+    '8. If they ask to empty, clear or reset their cart or Fridge, or to remove everything, call empty_fridge, then say in one line that their Fridge is empty. It does not cancel a running subscription; if they also want that, call cancel_subscription.',
     '',
     'Rules:',
     '- Never state a price, total or discount that a tool did not return. Never invent flavors.',
@@ -758,6 +761,7 @@ async function runConcierge(req, body, opts = {}) {
   let cadence = CADENCE_IDS.includes(body.cadence) ? body.cadence : null;
   let subscription = null;   // created this turn: { subscriptionId, sig, total, cadence, lines, env }
   let pendingAction = null;  // proposed this turn: { action, subscriptionId, summary }
+  let cleared = false;       // empty_fridge ran: the browser empties the Fridge before any new pack
   let confirmed = null;      // { action, subscriptionId, ran, ok, result?, code?, error? }
   // PayPal buttons from an earlier reply still in the chat (the browser says so; wording only).
   // A new pack this turn makes the browser drop them.
@@ -891,6 +895,15 @@ async function runConcierge(req, body, opts = {}) {
           items: view.items.map(i => `${i.qty} x ${i.name} at $${i.unit}`),
           note: past.subBottles ? `Not included: the ${past.subBottles} subscription bottles from that order.` : undefined,
           next: CHECKOUT_NOW };
+      }),
+    }),
+    empty_fridge: tool({
+      description: 'Empty the shopper\'s Fridge cart: takes out every bottle, one-time bottles and the subscription pack, and drops any PayPal button still waiting in the chat. Call it when they ask to empty, clear or reset their cart or Fridge. It does not cancel a subscription already running in PayPal (that is cancel_subscription).',
+      parameters: z.object({}),
+      execute: serial('empty_fridge', async () => {
+        setPack([]);
+        cleared = true;
+        return { emptied: true, next: 'Their Fridge is empty now. Say so in one line and offer to build a new pack.' };
       }),
     }),
     start_checkout: tool({
@@ -1162,6 +1175,7 @@ async function runConcierge(req, body, opts = {}) {
       return {
         reply: reply || emptySubReply() || (checkout ? 'Order ready. Tap the PayPal button below to approve.' : 'Done. Check your Fridge.'),
         pack: packChanged && pack.length ? packView(pack) : null,
+        cleared,
         checkout,
         toolsUsed,
         model: name,
@@ -1177,7 +1191,7 @@ async function runConcierge(req, body, opts = {}) {
       // A confirmed change already ran at PayPal: report it instead of an error the shopper
       // could take to mean nothing happened.
       if (!next && confirmed && confirmed.ran) {
-        return { reply: confirmedReply(confirmed), pack: packChanged && pack.length ? packView(pack) : null,
+        return { reply: confirmedReply(confirmed), pack: packChanged && pack.length ? packView(pack) : null, cleared,
           checkout, toolsUsed, model: name, ...subscriptionOut() };
       }
       if (!next) throw providerError(err, failures);
