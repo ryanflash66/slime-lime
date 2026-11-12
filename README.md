@@ -19,7 +19,7 @@ The repo started in April 2026 as a design portfolio piece, before the hackathon
 5. Open the concierge again and say *"get my usual"* to reload your last order.
 6. Or say *"make it monthly and start my subscription"* and tap **Subscribe with PayPal**. Later, *"what's my subscription?"*, *"pause it"* and then *"confirm"*: the agent changes nothing until you confirm.
 
-You can also skip the agent: add bottles from the lineup, open the **Fridge**, and click **Pay with PayPal**. For a subscription without the agent, build a pack on the **Subscribe** page, click **Add to Fridge**, then **Start subscription** in the Fridge.
+You can also skip the agent: add bottles from the lineup, open the **Fridge**, and click **Pay with PayPal**. For a subscription without the agent, build a pack on the **Subscribe** page, click **Add to Fridge**, then **Start subscription** in the Fridge. To clear the cart, click **Empty fridge** in the Fridge (with **Undo** for a few seconds), or tell the concierge *"empty my cart"*.
 
 **Hands-free mode.** Pick **Hands-free** in the mode picker, or tap the mic button in the nav at any time, to switch. The concierge opens full screen, keeps listening (no wake word) and answers out loud. Say *"confirm"* to approve a pause, resume or cancel, and *"stop listening"* to turn the mic off. Payment is never approved by voice: you still tap the PayPal button. Voice needs Chrome; in other browsers you type in the same panel.
 
@@ -72,6 +72,7 @@ api/concierge/chat.js  POST endpoint for the concierge
 | `start_subscription` | Creates the PayPal subscription for that pack, server-priced. The shopper approves it with the PayPal button. |
 | `subscription_status` | Reads a subscription: status, cadence, amount and next billing date. |
 | `pause_subscription`, `resume_subscription`, `cancel_subscription` | Propose a change. Nothing happens until the shopper confirms. |
+| `empty_fridge` | Empties the Fridge. It doesn't cancel a running subscription; that's `cancel_subscription`. |
 
 ## Run locally
 
@@ -178,3 +179,5 @@ Ready to paste into Devpost. Every pull request merged on or after 2026-10-01, f
 | [#44](https://github.com/ryanflash66/slime-lime/pull/44) | Hands-free stage: empty first-visit Fridge, subscription amount, readable agent line (DAR-710, DAR-711, DAR-712) | 2026-11-11 | First visits start with an empty Fridge; the stage shows the subscription amount and always fits the agent's line. |
 | [#30](https://github.com/ryanflash66/slime-lime/pull/30) | Remove third-party brand and game names from demo copy (DAR-707) | 2026-11-11 | Site copy no longer names other drinks or games. |
 | [#45](https://github.com/ryanflash66/slime-lime/pull/45) | Subscribe page: Add to Fridge, kept in sync with the Fridge; subscription pack shown first | 2026-11-11 | The Subscribe page adds its pack to the Fridge and stays in sync with it; the subscription pack is listed first. |
+| [#47](https://github.com/ryanflash66/slime-lime/pull/47) | Empty fridge: one-tap button in the Fridge and an empty_fridge tool for the agent | 2026-11-11 | An **Empty fridge** button with Undo, and the concierge can empty the cart on request. |
+| [#46](https://github.com/ryanflash66/slime-lime/pull/46) | README: subscriptions and hands-free are live, not in progress | 2026-11-12 | This README now describes everything as shipped. |
