@@ -1,0 +1,44 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=block">
+<link rel="stylesheet" href="readme.css">
+<style>
+  .card { padding: 40px 44px 42px; background: radial-gradient(120% 90% at 100% 0%, #10220F 0%, var(--canvas) 55%); }
+  h2 { font-size: 40px; margin: 14px 0 30px; }
+  h2 em { font-style: normal; color: var(--lime); }
+  .flow { display: grid; grid-template-columns: 1fr 34px 1fr 34px 1fr 34px 1fr; align-items: stretch; }
+  .node { background: var(--card); border: 1px solid var(--line-soft); border-radius: 16px; padding: 18px 16px 18px; }
+  .node.hot { border-color: rgba(202,224,15,.5); background: linear-gradient(180deg, #17290F, var(--card)); }
+  .node .mono { font-size: 10.5px; color: var(--lime); margin-bottom: 10px; }
+  .node h3 { font-family: 'Bricolage Grotesque'; font-weight: 800; font-size: 21px; letter-spacing: -.02em; line-height: 1.05; margin-bottom: 8px; }
+  .node p { font-size: 13.5px; line-height: 1.45; color: var(--muted); }
+  .node code { font-family: 'JetBrains Mono'; font-size: 12px; color: var(--lime-200); }
+  .arrow { display: flex; align-items: center; justify-content: center; }
+  .arrow svg { width: 26px; }
+  .rules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 18px; }
+  .rule { display: flex; gap: 12px; align-items: flex-start; border: 1px dashed rgba(202,224,15,.28); border-radius: 14px; padding: 14px 16px; }
+  .rule .dot { flex: none; width: 22px; height: 22px; border-radius: 7px; background: var(--lime); color: #0B1400; font: 700 12px 'JetBrains Mono'; display: grid; place-items: center; margin-top: 1px; }
+  .rule b { display: block; font-family: 'Bricolage Grotesque'; font-size: 16.5px; letter-spacing: -.01em; margin-bottom: 3px; }
+  .rule span { font-size: 13px; line-height: 1.4; color: var(--muted); }
+</style></head>
+<body>
+<div class="card" id="card">
+  <div class="eyebrow mono">How it works</div>
+  <h2 class="disp">The agent shops. <em>You hold the wallet.</em></h2>
+  <div class="flow">
+    <div class="node"><div class="mono">You</div><h3>Say how you play</h3><p>Voice in Chrome, or type in the same panel.</p></div>
+    <div class="arrow"><svg viewBox="0 0 26 14"><path d="M0 7h22M16 1l6 6-6 6" fill="none" stroke="#CAE00F" stroke-width="2"/></svg></div>
+    <div class="node hot"><div class="mono">Concierge</div><h3>Claude Haiku 5.5</h3><p>Picks flavors and a cadence. Gemini takes over if Claude fails.</p></div>
+    <div class="arrow"><svg viewBox="0 0 26 14"><path d="M0 7h22M16 1l6 6-6 6" fill="none" stroke="#CAE00F" stroke-width="2"/></svg></div>
+    <div class="node"><div class="mono">Server</div><h3>Prices every line</h3><p>From <code>catalog.js</code>. Signs each subscription id with an HMAC.</p></div>
+    <div class="arrow"><svg viewBox="0 0 26 14"><path d="M0 7h22M16 1l6 6-6 6" fill="none" stroke="#CAE00F" stroke-width="2"/></svg></div>
+    <div class="node"><div class="mono">PayPal</div><h3>You approve</h3><p>One-time order or a recurring subscription, in the PayPal window.</p></div>
+  </div>
+  <div class="rules">
+    <div class="rule"><div class="dot">$</div><div><b>The model never sets a price</b><span>It sends flavor ids and quantities only.</span></div></div>
+    <div class="rule"><div class="dot">✓</div><div><b>Nothing changes without "confirm"</b><span>Pause, resume and cancel wait for you.</span></div></div>
+    <div class="rule"><div class="dot">◎</div><div><b>No payer details reach the model</b><span>It sees order status and amounts only.</span></div></div>
+  </div>
+  <div class="corner tl"></div><div class="corner br"></div>
+</div>
+</body></html>

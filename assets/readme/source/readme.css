@@ -1,0 +1,22 @@
+/* Shared look for the README images. Tokens match colors_and_type.css. */
+:root {
+  --lime: #CAE00F; --lime-600: #8BBE1C; --lime-200: #E5F086;
+  --canvas: #060D08; --card: #0E1A0F; --card-2: #142117; --sunken: #020604;
+  --cream: #F7F8F4; --muted: #A8AC9C; --dim: #6F7368;
+  --line: rgba(202, 224, 15, .16); --line-soft: rgba(247, 248, 244, .08);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: transparent; }
+body { font-family: Inter, sans-serif; color: var(--cream); -webkit-font-smoothing: antialiased; }
+.card {
+  position: relative; width: 1000px; overflow: hidden; border-radius: 22px;
+  background: var(--canvas); border: 1px solid var(--line);
+}
+.mono { font-family: 'JetBrains Mono', monospace; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
+.disp { font-family: 'Bricolage Grotesque', sans-serif; font-weight: 800; letter-spacing: -.035em; line-height: .95; font-variation-settings: 'opsz' 96; }
+.eyebrow { display: flex; align-items: center; gap: 10px; color: var(--lime); font-size: 12px; }
+.eyebrow::before { content: ''; width: 22px; height: 1.5px; background: var(--lime); }
+.corner { position: absolute; width: 16px; height: 16px; border-color: var(--lime); border-style: solid; opacity: .8; }
+.corner.tl { top: 16px; left: 16px; border-width: 1.5px 0 0 1.5px; }
+.corner.br { bottom: 16px; right: 16px; border-width: 0 1.5px 1.5px 0; }
+.glow { position: absolute; border-radius: 50%; filter: blur(60px); pointer-events: none; }
