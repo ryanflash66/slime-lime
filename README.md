@@ -72,6 +72,7 @@ api/concierge/chat.js  POST endpoint for the concierge
 | `start_subscription` | Creates the PayPal subscription for that pack, server-priced. The shopper approves it with the PayPal button. |
 | `subscription_status` | Reads a subscription: status, cadence, amount and next billing date. |
 | `pause_subscription`, `resume_subscription`, `cancel_subscription` | Propose a change. Nothing happens until the shopper confirms. |
+| `empty_fridge` | Empties the Fridge when the shopper asks ("empty my cart"). A running PayPal subscription is untouched. |
 
 ## Run locally
 
@@ -178,3 +179,4 @@ Ready to paste into Devpost. Every pull request merged on or after 2026-10-01, f
 | [#44](https://github.com/ryanflash66/slime-lime/pull/44) | Hands-free stage: empty first-visit Fridge, subscription amount, readable agent line (DAR-710, DAR-711, DAR-712) | 2026-11-11 | First visits start with an empty Fridge; the stage shows the subscription amount and always fits the agent's line. |
 | [#30](https://github.com/ryanflash66/slime-lime/pull/30) | Remove third-party brand and game names from demo copy (DAR-707) | 2026-11-11 | Site copy no longer names other drinks or games. |
 | [#45](https://github.com/ryanflash66/slime-lime/pull/45) | Subscribe page: Add to Fridge, kept in sync with the Fridge; subscription pack shown first | 2026-11-11 | The Subscribe page adds its pack to the Fridge and stays in sync with it; the subscription pack is listed first. |
+| [#47](https://github.com/ryanflash66/slime-lime/pull/47) | Empty fridge: a button in the Fridge (with Undo) and an empty_fridge tool for the agent | 2026-11-11 | Empty the Fridge in one click, with Undo, or ask the agent to empty it. |
