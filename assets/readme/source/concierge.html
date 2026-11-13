@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=block">
+<link rel="stylesheet" href="readme.css">
+<style>
+  .card { padding: 40px 44px 38px; background: radial-gradient(120% 80% at 50% 0%, #10220F 0%, var(--canvas) 60%); }
+  h2 { font-size: 40px; margin: 14px 0 28px; }
+  h2 em { font-style: normal; color: var(--lime); }
+  .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  .step .lbl { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+  .step .n { font-family: 'JetBrains Mono'; font-weight: 700; color: var(--lime); font-size: 13px; }
+  .step .t { font-family: 'Bricolage Grotesque'; font-weight: 700; font-size: 19px; letter-spacing: -.02em; }
+  .shot { border-radius: 16px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 18px 40px rgba(0,0,0,.5); aspect-ratio: 800 / 1280; }
+  .shot img { width: 100%; display: block; }
+  .foot { margin-top: 22px; font-size: 10.5px; color: var(--dim); text-align: center; }
+</style></head>
+<body>
+<div class="card" id="card">
+  <div class="eyebrow mono">The Flavor Concierge</div>
+  <h2 class="disp">Say how you play. <em>Approve in PayPal.</em></h2>
+  <div class="row">
+    <div class="step"><div class="lbl"><span class="n">01</span><span class="t">Builds your pack</span></div>
+      <div class="shot"><img src="shots/panel-1.webp" alt=""></div></div>
+    <div class="step"><div class="lbl"><span class="n">02</span><span class="t">Makes it monthly</span></div>
+      <div class="shot s2"><img src="shots/panel-2.webp" alt=""></div></div>
+    <div class="step"><div class="lbl"><span class="n">03</span><span class="t">Waits for "confirm"</span></div>
+      <div class="shot"><img src="shots/panel-4.webp" alt=""></div></div>
+  </div>
+  <div class="foot mono">Sample conversation · real prices · PayPal sandbox, test money only</div>
+  <div class="corner tl"></div><div class="corner br"></div>
+</div>
+</body></html>

@@ -1,14 +1,21 @@
+<p align="center">
+  <img src="assets/readme/hero.webp" width="100%" alt="Slime Lime: Late nights deserve better fuel. An AI flavor concierge builds your soda pack and checks out with PayPal, once or every month, by voice or by text.">
+</p>
+
+<p align="center">
+  <a href="https://slime-lime-eta.vercel.app"><b>Live site</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#try-it">Try it</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="docs/demo-script.md">Demo script</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#how-it-works">How it works</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#built-for-the-hackathon">Built for the hackathon</a>
+</p>
+
 # Slime Lime
 
-> Late nights deserve better fuel.
+Slime Lime is a fictional clean-formula gaming soda brand, and this repo is its storefront. The hackathon entry is the **Flavor Concierge**: an AI agent that builds your pack from the real lineup, sets a delivery cadence, and checks out with PayPal, either as a one-time order or as a PayPal Subscription. It runs on Claude Haiku 5.5, with Gemini as an automatic fallback, and has a hands-free voice mode.
 
-## What it is
+> [!NOTE]
+> Payments run in the **PayPal sandbox, test money only**. Nothing is charged and nothing ships.
 
-Slime Lime is a fictional clean-formula gaming soda brand, and this repo is its storefront. The hackathon entry is the **Flavor Concierge**: an AI agent that builds your pack from the real lineup, sets a delivery cadence, and checks out with PayPal, either as a one-time order or as a PayPal Subscription, with a hands-free voice mode. Payments run in the **PayPal sandbox, test money only**. Nothing is charged and nothing ships.
-
-**Live site:** https://slime-lime-eta.vercel.app
-
-The repo started in April 2026 as a design portfolio piece, before the hackathon. Everything built during the hackathon is listed in [Built for the hackathon](#built-for-the-hackathon-since-oct-1-2026). The concierge runs on Claude Haiku 5.5, with Gemini as an automatic fallback. PayPal Subscriptions and the hands-free voice mode are both live on the production site.
+<p align="center">
+  <img src="assets/readme/concierge.webp" width="100%" alt="Three concierge panels: it builds a 12-bottle pack for $30.75, makes it a $27.69 monthly PayPal subscription, then pauses it only after the shopper says confirm.">
+</p>
 
 ## Try it
 
@@ -19,13 +26,21 @@ The repo started in April 2026 as a design portfolio piece, before the hackathon
 5. Open the concierge again and say *"get my usual"* to reload your last order.
 6. Or say *"make it monthly and start my subscription"* and tap **Subscribe with PayPal**. Later, *"what's my subscription?"*, *"pause it"* and then *"confirm"*: the agent changes nothing until you confirm.
 
-You can also skip the agent: add bottles from the lineup, open the **Fridge**, and click **Pay with PayPal**. For a subscription without the agent, build a pack on the **Subscribe** page, click **Add to Fridge**, then **Start subscription** in the Fridge. To clear the cart, click **Empty fridge** in the Fridge (with **Undo** for a few seconds), or tell the concierge *"empty my cart"*.
+<p align="center">
+  <img src="assets/readme/store.webp" width="100%" alt="The first-visit mode picker (Hands-free or Legacy) and the Fridge drawer with a 12-bottle pack and the Pay with PayPal button.">
+</p>
 
 **Hands-free mode.** Pick **Hands-free** in the mode picker, or tap the mic button in the nav at any time, to switch. The concierge opens full screen, keeps listening (no wake word) and answers out loud. Say *"confirm"* to approve a pause, resume or cancel, and *"stop listening"* to turn the mic off. Payment is never approved by voice: you still tap the PayPal button. Voice needs Chrome; in other browsers you type in the same panel.
+
+You can also skip the agent: add bottles from the lineup, open the **Fridge**, and click **Pay with PayPal**. For a subscription without the agent, build a pack on the **Subscribe** page, click **Add to Fridge**, then **Start subscription** in the Fridge. To clear the cart, click **Empty fridge** in the Fridge (with **Undo** for a few seconds), or tell the concierge *"empty my cart"*.
 
 The full walkthrough, with what to say at each step, is in [`docs/demo-script.md`](docs/demo-script.md).
 
 ## How it works
+
+<p align="center">
+  <img src="assets/readme/how.webp" width="100%" alt="Flow: you say how you play, the concierge on Claude Haiku 5.5 picks a pack, the server prices every line and signs subscriptions, and you approve in PayPal. The model never sets a price, nothing changes without confirm, and no payer details reach the model.">
+</p>
 
 - **Frontend:** a static, no-build React 18 SPA. `Slime Lime.html` loads React and Babel-standalone from a CDN, compiles the `.jsx` files in the browser, and hash-routes between pages. Vanilla CSS, three.js for the 3D bottle, GSAP for motion.
 - **Backend:** Node serverless functions in `api/` on Vercel, for PayPal and the concierge.
@@ -38,7 +53,8 @@ The full walkthrough, with what to say at each step, is in [`docs/demo-script.md
 - **Subscription changes need a confirm.** The agent's pause, resume and cancel tools change nothing on their own. They return a pending action, signed by the server, that runs only when the shopper taps **Confirm** or says *"confirm"* within 30 seconds.
 - **Hands-free runs in the browser.** `voice.jsx` uses Chrome's speech recognition and speech synthesis, and pauses the mic while the agent talks so it never hears itself. `handsfree-fx.jsx` draws the full-screen stage and the visuals for each agent step.
 
-Key files:
+<details>
+<summary><b>Key files</b></summary>
 
 ```
 Slime Lime.html        entry: loads CDN scripts, mounts <App/>
@@ -59,6 +75,8 @@ api/_lib/subsign.js    HMAC signature for subscription ids
 api/paypal/            config, orders (create), capture, plans, subscriptions, subscription-manage
 api/concierge/chat.js  POST endpoint for the concierge
 ```
+
+</details>
 
 ### Agent tools
 
@@ -126,13 +144,14 @@ Prices live in three places: `api/_lib/catalog.js` (server), `FLAVORS` in `shell
 
 Vercel auto-deploys on push to `main`. Production alias: **slime-lime-eta.vercel.app**. Manual deploy: `vercel --prod` from the project root.
 
-## License
+## Built for the hackathon
 
-MIT. See [`LICENSE`](LICENSE).
+Ready to paste into Devpost: all 45 pull requests merged on or after 2026-10-01, from `gh pr list --state merged --search "merged:>=2026-10-01"`. Dates are merge dates in UTC.
 
-## Built for the hackathon (since Oct 1, 2026)
+The repo started in April 2026 as a design portfolio piece, before the hackathon.
 
-Ready to paste into Devpost. Every pull request merged on or after 2026-10-01, from `gh pr list --state merged --search "merged:>=2026-10-01"`. Dates are merge dates in UTC.
+<details>
+<summary><b>All 45 pull requests</b></summary>
 
 | PR | Title | Merged | Summary |
 |---|---|---|---|
@@ -180,3 +199,10 @@ Ready to paste into Devpost. Every pull request merged on or after 2026-10-01, f
 | [#30](https://github.com/ryanflash66/slime-lime/pull/30) | Remove third-party brand and game names from demo copy (DAR-707) | 2026-11-11 | Site copy no longer names other drinks or games. |
 | [#45](https://github.com/ryanflash66/slime-lime/pull/45) | Subscribe page: Add to Fridge, kept in sync with the Fridge; subscription pack shown first | 2026-11-11 | The Subscribe page adds its pack to the Fridge and stays in sync with it; the subscription pack is listed first. |
 | [#47](https://github.com/ryanflash66/slime-lime/pull/47) | Empty fridge: a button in the Fridge (with Undo) and an empty_fridge tool for the agent | 2026-11-11 | Empty the Fridge in one click, with Undo, or ask the agent to empty it. |
+| [#46](https://github.com/ryanflash66/slime-lime/pull/46) | README: subscriptions and hands-free are live, not in progress | 2026-11-13 | The README describes subscriptions and hands-free mode as shipped. |
+
+</details>
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).

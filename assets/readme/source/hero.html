@@ -1,0 +1,58 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=block">
+<link rel="stylesheet" href="readme.css">
+<style>
+  .card { height: 470px; }
+  .bg { position: absolute; inset: 0; background: url(../../scenes/bg-lemon-lime-wide.webp) 62% 50% / cover; filter: brightness(.62) saturate(1.05); }
+  .fade { position: absolute; inset: 0; background:
+      linear-gradient(90deg, var(--canvas) 0%, rgba(6,13,8,.94) 34%, rgba(6,13,8,.45) 62%, rgba(6,13,8,.15) 100%),
+      linear-gradient(0deg, rgba(6,13,8,.85) 0%, rgba(6,13,8,0) 30%); }
+  .ghost { position: absolute; right: -10px; top: 70px; font-size: 168px; line-height: .84; text-align: right;
+      color: rgba(202,224,15,.11); }
+  .left { position: absolute; left: 56px; top: 46px; width: 600px; }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 34px; }
+  .brand img { width: 34px; height: auto; }
+  .brand span { font-family: 'Bricolage Grotesque'; font-weight: 800; font-size: 24px; letter-spacing: -.03em; }
+  h1 { font-size: 58px; margin: 16px 0 18px; white-space: nowrap; }
+  h1 em { font-style: normal; color: var(--lime); }
+  p.sub { font-size: 17px; line-height: 1.5; color: #D6D9CC; max-width: 450px; }
+  .chips { display: flex; gap: 8px; margin-top: 26px; flex-wrap: wrap; }
+  .chip { font-size: 10.5px; padding: 7px 11px; border-radius: 999px; border: 1px solid var(--line); background: rgba(202,224,15,.07); color: var(--lime-200); letter-spacing: .14em; }
+  .bottle { position: absolute; right: 175px; top: 34px; height: 420px; filter: drop-shadow(0 30px 40px rgba(0,0,0,.55)); }
+  .bubble { position: absolute; font-size: 14px; line-height: 1.35; border-radius: 14px; padding: 10px 14px; box-shadow: 0 14px 30px rgba(0,0,0,.45); }
+  .you { right: 300px; top: 62px; background: var(--lime); color: #0B1400; font-weight: 500; border-bottom-right-radius: 4px; }
+  .agent { right: 34px; top: 288px; width: 232px; background: rgba(14,26,15,.92); border: 1px solid var(--line); backdrop-filter: blur(6px); }
+  .agent .mono { font-size: 9.5px; color: var(--lime); margin-bottom: 6px; }
+  .agent .row { display: flex; justify-content: space-between; color: #D6D9CC; font-size: 13px; }
+  .agent .tot { display: flex; justify-content: space-between; align-items: baseline; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-soft); }
+  .agent .tot b { font-family: 'JetBrains Mono'; color: var(--lime); font-size: 17px; }
+  .agent .tot span { font-size: 9.5px; color: var(--muted); }
+</style></head>
+<body>
+<div class="card" id="card">
+  <div class="bg"></div><div class="fade"></div>
+  <div class="ghost disp">LEMON<br>LIME</div>
+  <img class="bottle" src="../../bottle/renders/hero-lemon-lime.webp" alt="">
+  <div class="bubble you">I play ranked FPS late at night</div>
+  <div class="bubble agent">
+    <div class="mono">Flavor Concierge · AI</div>
+    <div class="row"><span>6 × Lemon · Lime</span><span>$15.00</span></div>
+    <div class="row"><span>3 × Blue Raspberry</span><span>$7.50</span></div>
+    <div class="row"><span>3 × Grape Glitch</span><span>$8.25</span></div>
+    <div class="tot"><span class="mono">12 bottles</span><b>$30.75</b></div>
+  </div>
+  <div class="left">
+    <div class="brand"><img src="../../logo-glow-1024.png" alt=""><span>SLIME LIME</span></div>
+    <div class="eyebrow mono">AI flavor concierge · PayPal checkout</div>
+    <h1 class="disp">Late nights deserve<br><em>better fuel.</em></h1>
+    <p class="sub">Tell the concierge how you play. It builds your pack and checks out with PayPal, once or every month. By voice or by text.</p>
+    <div class="chips">
+      <span class="chip mono">Hands-free voice</span>
+      <span class="chip mono">PayPal Subscriptions</span>
+      <span class="chip mono">Sandbox · test money</span>
+    </div>
+  </div>
+  <div class="corner tl"></div><div class="corner br"></div>
+</div>
+</body></html>
