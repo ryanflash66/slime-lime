@@ -146,12 +146,12 @@ Vercel auto-deploys on push to `main`. Production alias: **slime-lime-eta.vercel
 
 ## Built for the hackathon
 
-Ready to paste into Devpost: all 45 pull requests merged on or after 2026-10-01, from `gh pr list --state merged --search "merged:>=2026-10-01"`. Dates are merge dates in UTC.
+Ready to paste into Devpost: every pull request merged on or after 2026-10-01, from `gh pr list --state merged --search "merged:>=2026-10-01"`. Dates are merge dates in UTC.
 
 The repo started in April 2026 as a design portfolio piece, before the hackathon.
 
 <details>
-<summary><b>All 45 pull requests</b></summary>
+<summary><b>Every pull request since Oct 1</b></summary>
 
 | PR | Title | Merged | Summary |
 |---|---|---|---|
@@ -200,6 +200,7 @@ The repo started in April 2026 as a design portfolio piece, before the hackathon
 | [#45](https://github.com/ryanflash66/slime-lime/pull/45) | Subscribe page: Add to Fridge, kept in sync with the Fridge; subscription pack shown first | 2026-11-11 | The Subscribe page adds its pack to the Fridge and stays in sync with it; the subscription pack is listed first. |
 | [#47](https://github.com/ryanflash66/slime-lime/pull/47) | Empty fridge: a button in the Fridge (with Undo) and an empty_fridge tool for the agent | 2026-11-11 | Empty the Fridge in one click, with Undo, or ask the agent to empty it. |
 | [#46](https://github.com/ryanflash66/slime-lime/pull/46) | README: subscriptions and hands-free are live, not in progress | 2026-11-13 | The README describes subscriptions and hands-free mode as shipped. |
+| [#48](https://github.com/ryanflash66/slime-lime/pull/48) | README: brand visuals matching the site | 2026-11-13 | This README's hero, concierge, store and how-it-works images, built from the site's own fonts and art. |
 
 </details>
 
