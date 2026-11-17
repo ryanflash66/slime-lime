@@ -4,7 +4,7 @@
 // so the Babel components can render the On-device / Cloud badge and the model download state.
 import { initializeApp } from 'firebase/app';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
-import { getAI, getGenerativeModel, GoogleAIBackend, InferenceMode, InferenceSource } from 'firebase/ai';
+import { AIErrorCode, getAI, getGenerativeModel, GoogleAIBackend, InferenceMode, InferenceSource } from 'firebase/ai';
 
 // Web config for Firebase project `slime-lime`. These values are public by design: App Check,
 // not the API key, is what keeps other sites from spending this project's AI Logic quota.
@@ -105,8 +105,10 @@ function initDevice() {
   return downloadPromise;
 }
 
+// Resolves to null after `ms`. The call it wraps can't be cancelled, so a late failure is swallowed.
 function withTimeout(promise, ms) {
   let timer;
+  promise.catch(() => {});
   return Promise.race([
     promise.finally(() => clearTimeout(timer)),
     new Promise(resolve => { timer = setTimeout(() => resolve(null), ms); }),
@@ -127,6 +129,9 @@ async function ask(prompt, { cloudOnly = false } = {}) {
         result = await withTimeout(model.generateContent(prompt), ON_DEVICE_TIMEOUT_MS);
         if (!result) console.warn(`[hybrid-ai] on-device answer took over ${ON_DEVICE_TIMEOUT_MS / 1000}s, asking the cloud`);
       } catch (err) {
+        // A failed cloud request (the SDK routed this one to the cloud, e.g. App Check) would only
+        // fail again, so it surfaces as is. Anything else came from Nano: ask the cloud.
+        if (err && err.code === AIErrorCode.FETCH_ERROR) throw err;
         console.warn('[hybrid-ai] on-device answer failed, asking the cloud', err);
       }
       fellBack = !result;

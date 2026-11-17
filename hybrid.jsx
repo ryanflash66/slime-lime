@@ -91,7 +91,7 @@ function HybridLabPage() {
   async function onAsk(e) {
     e.preventDefault();
     const text = prompt.trim();
-    if (!text || busy || !window.slHybrid) return;
+    if (!text || busy || !window.slHybrid || s.firebase !== 'ready') return; // also guards Ctrl+Enter
     setBusy(true);
     setError(null);
     const started = performance.now();
