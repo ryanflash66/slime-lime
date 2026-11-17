@@ -9,7 +9,7 @@ import { AIErrorCode, getAI, getGenerativeModel, GoogleAIBackend, InferenceMode,
 // Web config for Firebase project `slime-lime`. These values are public by design: App Check,
 // not the API key, is what keeps other sites from spending this project's AI Logic quota.
 const firebaseConfig = {
-  apiKey: 'AIzaSyAuIQB5rU4wB4QolZ8svpksO6h-bD5enrI',
+  apiKey: 'AIzaSyAuIQB5rU4wB4QolZ8svpksO6h-bD5enrI', // gitleaks:allow (public Firebase web key, not a secret)
   authDomain: 'slime-lime.firebaseapp.com',
   projectId: 'slime-lime',
   storageBucket: 'slime-lime.firebasestorage.app',
