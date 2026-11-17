@@ -228,10 +228,10 @@ function packModels(ids) {
 // The bottle count the shopper asked for, if they named exactly one: "6 bottles", "a 12-pack",
 // or a lone number like the 6 in "chill, low sugar, 6". "2am" or "3 flavors" don't count.
 function requestedBottles(vibe) {
-  const tagged = /(\d{1,3})\s*-?\s*(?:pack|bottles?|cans?|sodas?)\b/i.exec(vibe);
+  const tagged = /(?<!\d)(\d+)\s*-?\s*(?:pack|bottles?|cans?|sodas?)\b/i.exec(vibe);
   let n = tagged ? Number(tagged[1]) : null;
   if (n == null) {
-    const lone = vibe.match(/(?:^|[\s,;:])(\d{1,3})(?=$|[\s,;:.!?])(?!\s*(?:flavou?rs?|kinds?|types?)\b)/gi) || [];
+    const lone = vibe.match(/(?:^|[\s,;:])(\d+)(?=$|[\s,;:.!?])(?!\s*(?:flavou?rs?|kinds?|types?)\b)/gi) || [];
     if (lone.length === 1) n = Number(lone[0].replace(/\D/g, ''));
   }
   return n >= 1 ? Math.min(n, PACK_MAX_BOTTLES) : null;
