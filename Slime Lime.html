@@ -60,6 +60,7 @@
 <script type="text/babel" src="subscribe.jsx"></script>
 <script type="text/babel" src="story-faq.jsx"></script>
 <script type="text/babel" src="hybrid.jsx"></script>
+<script type="text/babel" src="vibe-pack.jsx"></script>
 
 <script type="text/babel">
 const { useState: useStateApp, useEffect: useEffectApp, useRef: useRefApp } = React;
@@ -81,7 +82,7 @@ function App() {
   else if (route.startsWith('/story')) page = <window.StoryPage/>;
   else if (route.startsWith('/faq')) page = <window.FAQPage/>;
   else if (route.startsWith('/hybrid')) page = <window.HybridLabPage/>;
-  else page = <window.HomePage flavor={flavor} onPickFlavor={setFlavor} onAdd={cart.add}/>;
+  else page = <window.HomePage flavor={flavor} onPickFlavor={setFlavor} onAdd={cart.add} onFillPack={cart.fillPack} onOpenFridge={() => cart.setCartOpen(true)}/>;
 
   return (
     <div>

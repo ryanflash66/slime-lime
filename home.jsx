@@ -1123,7 +1123,7 @@ function SubscribeBar({ onGo }) {
 // ─────────────────────────────────────────────────────────────
 // HOME PAGE
 // ─────────────────────────────────────────────────────────────
-function HomePage({ flavor, onPickFlavor, onAdd }) {
+function HomePage({ flavor, onPickFlavor, onAdd, onFillPack, onOpenFridge }) {
   const flavors = window.FLAVORS;
   return (
     <>
@@ -1134,6 +1134,7 @@ function HomePage({ flavor, onPickFlavor, onAdd }) {
       <LiveTicker/>
       <ProofStrip/>
       <Lineup flavors={flavors} current={flavor} onPick={onPickFlavor} onAdd={onAdd}/>
+      {window.VibePack && onFillPack && <window.VibePack onFillPack={onFillPack} onOpenFridge={onOpenFridge}/>}
       <ScrollStory/>
       <Streamers/>
       <SubscribeBar onGo={() => window.navTo('/subscribe')}/>

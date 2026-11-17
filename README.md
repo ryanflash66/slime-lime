@@ -66,6 +66,7 @@ voice.jsx              hands-free voice loop: listening, spoken replies, voice c
 handsfree-fx.jsx       the full-screen hands-free stage and its visuals
 hybrid-ai.js           Firebase AI Logic in the browser: Gemini Nano on-device first, cloud Gemini fallback (window.slHybrid)
 hybrid.jsx             the On-device / Cloud badge, the Nano status pill, and the #/hybrid test page
+vibe-pack.jsx          Vibe to Pack on the home page: a vibe becomes a pack in the Fridge (window.VibePack)
 home.jsx, flagship.jsx, subscribe.jsx, story-faq.jsx   pages
 bottle3d.js, motion.js, game.js, presence.js           3D bottle, GSAP motion, scroll game, players-online mock
 api/_lib/catalog.js    server price list and validation (source of truth for prices)
@@ -117,6 +118,8 @@ Then open http://localhost:3000.
 ### Hybrid AI (Firebase AI Logic)
 
 `hybrid-ai.js` loads the Firebase web SDK from Google's CDN through the import map in `Slime Lime.html` (no build step) and asks with `InferenceMode.PREFER_ON_DEVICE`: Gemini Nano in Chrome when it is ready, otherwise cloud Gemini through Firebase. Try it at `#/hybrid`; each answer carries an **On-device** or **Cloud** badge.
+
+**Vibe to Pack** (home page, under the lineup) uses the same engine: the shopper types a vibe like "chill, low sugar, 6" and the model answers with JSON constrained by a schema whose `id` is an enum of the real flavor ids (`responseConstraint` on Nano, `responseJsonSchema` in the cloud). The answer is checked again before it fills the Fridge: unknown flavors are dropped and the bottle counts are scaled to the number the shopper asked for (6 if none). The model only picks flavors and counts; prices are still set by the server at checkout.
 
 - **On-device:** Chrome 139 or newer with `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input` enabled. The status pill shows the model download; until it finishes, answers come from the cloud.
 - **App Check is enforced** on AI Logic, and the reCAPTCHA Enterprise key only covers the production domain. On localhost, register a debug token in the Firebase console (App Check, Apps, Manage debug tokens), then run this once in the browser console and reload:
