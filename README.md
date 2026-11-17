@@ -64,6 +64,8 @@ concierge.jsx          the Flavor Concierge chat panel
 mode.jsx               the Hands-free / Legacy mode picker
 voice.jsx              hands-free voice loop: listening, spoken replies, voice commands
 handsfree-fx.jsx       the full-screen hands-free stage and its visuals
+hybrid-ai.js           Firebase AI Logic in the browser: Gemini Nano on-device first, cloud Gemini fallback (window.slHybrid)
+hybrid.jsx             the On-device / Cloud badge, the Nano status pill, and the #/hybrid test page
 home.jsx, flagship.jsx, subscribe.jsx, story-faq.jsx   pages
 bottle3d.js, motion.js, game.js, presence.js           3D bottle, GSAP motion, scroll game, players-online mock
 api/_lib/catalog.js    server price list and validation (source of truth for prices)
@@ -111,6 +113,19 @@ vercel dev            # serves the site and /api on http://localhost:3000
 ```
 
 Then open http://localhost:3000.
+
+### Hybrid AI (Firebase AI Logic)
+
+`hybrid-ai.js` loads the Firebase web SDK from Google's CDN through the import map in `Slime Lime.html` (no build step) and asks with `InferenceMode.PREFER_ON_DEVICE`: Gemini Nano in Chrome when it is ready, otherwise cloud Gemini through Firebase. Try it at `#/hybrid`; each answer carries an **On-device** or **Cloud** badge.
+
+- **On-device:** Chrome 139 or newer with `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input` enabled. The status pill shows the model download; until it finishes, answers come from the cloud.
+- **App Check is enforced** on AI Logic, and the reCAPTCHA Enterprise key only covers the production domain. On localhost, register a debug token in the Firebase console (App Check, Apps, Manage debug tokens), then run this once in the browser console and reload:
+
+  ```js
+  localStorage.setItem('sl-appcheck-debug-token', '<your debug token>')
+  ```
+
+  Vercel preview URLs aren't on the key either, so cloud answers there fail App Check.
 
 ## Environment variables
 

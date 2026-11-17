@@ -24,7 +24,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"/>
 <link rel="stylesheet" href="colors_and_type.css"/>
 <link rel="stylesheet" href="site.css"/>
-<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"}}</script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/","firebase/app":"https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js","firebase/app-check":"https://www.gstatic.com/firebasejs/13.2.0/firebase-app-check.js","firebase/ai":"https://www.gstatic.com/firebasejs/13.2.0/firebase-ai.js"}}</script>
 <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js" crossorigin="anonymous"/>
 <link rel="preload" href="assets/bottle/slime-lime-bottle.glb" as="fetch" crossorigin="anonymous"/>
 </head>
@@ -47,6 +47,8 @@
 <script src="game.js"></script>
 <script src="presence.js"></script>
 <script type="module" src="bottle3d.js"></script>
+<!-- Firebase AI Logic, hybrid on-device/cloud (window.slHybrid) -->
+<script type="module" src="hybrid-ai.js"></script>
 <script type="text/babel" src="shell.jsx"></script>
 <script type="text/babel" src="fridge.jsx"></script>
 <script type="text/babel" src="concierge.jsx"></script>
@@ -57,6 +59,7 @@
 <script type="text/babel" src="flagship.jsx"></script>
 <script type="text/babel" src="subscribe.jsx"></script>
 <script type="text/babel" src="story-faq.jsx"></script>
+<script type="text/babel" src="hybrid.jsx"></script>
 
 <script type="text/babel">
 const { useState: useStateApp, useEffect: useEffectApp, useRef: useRefApp } = React;
@@ -77,6 +80,7 @@ function App() {
     onSync={cart.syncSubscription} fridgeSubs={cart.cart.filter(i => i.subscription)}/>;
   else if (route.startsWith('/story')) page = <window.StoryPage/>;
   else if (route.startsWith('/faq')) page = <window.FAQPage/>;
+  else if (route.startsWith('/hybrid')) page = <window.HybridLabPage/>;
   else page = <window.HomePage flavor={flavor} onPickFlavor={setFlavor} onAdd={cart.add}/>;
 
   return (
