@@ -3,15 +3,79 @@
 </p>
 
 <p align="center">
-  <a href="https://slime-lime-eta.vercel.app"><b>Live site</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#try-it">Try it</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="docs/demo-script.md">Demo script</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#how-it-works">How it works</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#built-for-the-hackathon">Built for the hackathon</a>
+  <a href="https://slime-lime-eta.vercel.app"><b>Live site</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#test-it-for-judges"><b>#BuildHybridAI: test it</b></a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#try-it">Try it</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="docs/demo-script.md">Demo script</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#how-it-works">How it works</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="#built-for-the-hackathon">Built for the hackathon</a>
 </p>
 
 # Slime Lime
 
-Slime Lime is a fictional clean-formula gaming soda brand, and this repo is its storefront. The hackathon entry is the **Flavor Concierge**: an AI agent that builds your pack from the real lineup, sets a delivery cadence, and checks out with PayPal, either as a one-time order or as a PayPal Subscription. It runs on Claude Haiku 5.5, with Gemini as an automatic fallback, and has a hands-free voice mode.
+Slime Lime is a fictional clean-formula gaming soda brand, and this repo is its storefront. Its #BuildHybridAI entry is **Vibe to Pack** (next section). Its earlier PayPal AI Hackathon entry is the **Flavor Concierge**: an AI agent that builds your pack from the real lineup, sets a delivery cadence, and checks out with PayPal, either as a one-time order or as a PayPal Subscription. It runs on Claude Haiku 5.5, with Gemini as an automatic fallback, and has a hands-free voice mode.
 
 > [!NOTE]
 > Payments run in the **PayPal sandbox, test money only**. Nothing is charged and nothing ships.
+
+## #BuildHybridAI: Vibe to Pack on Firebase AI Logic
+
+**Vibe to Pack** turns a shopper's mood into a soda pack. Type a vibe like *"late-night ranked, nothing too sweet, 12 bottles"* and Gemini Nano, running inside Chrome, picks real flavors and bottle counts and drops the pack into the Fridge (the cart). When this browser can't run Gemini Nano, the same request goes to Gemini in the cloud through Firebase AI Logic. A badge on every answer says which one did it: **On-device** or **Cloud**.
+
+### Built during #BuildHybridAI
+
+Slime Lime started in April 2026 as a design portfolio site, and the storefront, PayPal checkout, subscriptions, the Flavor Concierge and hands-free voice were built before this hackathon opened. During the submission period I added:
+
+- **Firebase AI Logic in the browser** (`hybrid-ai.js`): one hybrid engine that asks with `InferenceMode.PREFER_ON_DEVICE`, so Gemini Nano answers when it's ready and cloud Gemini answers otherwise. A 20-second on-device timeout falls back to an `ONLY_IN_CLOUD` model, so a stuck first call never freezes the page.
+- **Vibe to Pack** on the home page (`vibe-pack.jsx`): one JSON schema, with the real flavor ids as an enum, constrains both Nano (`responseConstraint`) and the cloud (`responseJsonSchema`). The answer is checked again before it reaches the Fridge, and the bottle counts are scaled to the number the shopper asked for (6 if none, at most 48).
+- **The On-device / Cloud badge and the Gemini Nano status pill** (`hybrid.jsx`): shows whether the model is ready, offers a Download button (Chrome only starts the download after a click) and shows its progress.
+- **A free-text test page** at `#/hybrid`.
+- **App Check** with reCAPTCHA Enterprise on the production domain.
+
+Pull requests [#49](https://github.com/ryanflash66/slime-lime/pull/49), [#50](https://github.com/ryanflash66/slime-lime/pull/50) and [#51](https://github.com/ryanflash66/slime-lime/pull/51).
+
+The model never sets a price. It only picks flavor ids and counts; every amount PayPal charges is set by the server from `api/_lib/catalog.js`.
+
+The **Flavor Concierge** chat (bottom right) predates the hackathon and runs on the server on Claude Haiku 5.5, with Gemini as a fallback. It does not use Firebase AI Logic.
+
+### Test it (for judges)
+
+No account or login is needed. Payments are PayPal sandbox, test money only.
+
+**1. Cloud path (any desktop browser, about 2 minutes)**
+
+1. Open https://slime-lime-eta.vercel.app. In the first-visit picker, click **Skip**.
+2. Scroll down to **Say the vibe. Get the pack.**, just under the flavor lineup.
+3. Tick **Cloud only**, then click the example **chill, low sugar, 6**.
+4. You should see a **Cloud** badge, a one-line reason, 6 bottles across a few real flavors, and **6 BOTTLES · IN YOUR FRIDGE**. Click **Open Fridge** to see the pack. The amount PayPal charges is set again by the server at checkout.
+
+**2. On-device path (Gemini Nano in Chrome)**
+
+1. Use Chrome on desktop, version 139 or newer. Paste `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input` into the address bar, set the flag to **Enabled** and relaunch Chrome.
+2. Open https://slime-lime-eta.vercel.app again. The status pill above the vibe box shows the Gemini Nano state:
+   - **On-device model not downloaded**, with a **Download** link: click it. The download can take several minutes and needs free disk space. The pill shows its progress.
+   - **On-device model ready**: go to the next step.
+   - **Cloud only in this browser**: this Chrome can't run Gemini Nano (flag off, older version or unsupported device). The cloud path still works.
+3. Untick **Cloud only**, type `late-night ranked, nothing too sweet, 12 bottles` and click **Build my pack**.
+4. You should see an **On-device** badge and 12 bottles. The first on-device answer can take longer while Chrome loads the model.
+5. Optional check in DevTools: `await LanguageModel.availability()` returns `"available"`.
+
+**3. Fallback**
+
+If Gemini Nano stalls for more than 20 seconds or fails, the same request goes to cloud Gemini through Firebase, and the result says *"On-device model stalled or failed, so the cloud built this one."*
+
+**4. Free-text test page**
+
+Open https://slime-lime-eta.vercel.app/#/hybrid, type any prompt and click **Ask**. Each answer shows its badge and how long it took. Tick **Cloud only** to compare.
+
+### Where Firebase AI Logic is called
+
+All in [`hybrid-ai.js`](hybrid-ai.js), loaded as an ES module with the Firebase JS SDK 13.2.0 from Google's CDN through the import map in `Slime Lime.html` (no build step):
+
+| Line (as of the Nov 17 deploy) | What it does |
+|---|---|
+| [7](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L7) | Imports `getAI`, `getGenerativeModel`, `InferenceMode` and `InferenceSource` from `firebase/ai` |
+| [67](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L67) | Starts App Check with reCAPTCHA Enterprise |
+| [72 to 76](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L72-L76) | The hybrid model (`PREFER_ON_DEVICE`) and the cloud-only fallback (`ONLY_IN_CLOUD`) |
+| [217 to 222](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L217-L222) | The Vibe to Pack model pair, with the JSON schema on both sides |
+| [135](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L135) and [145](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L145) | `generateContent` at runtime, on-device first, then the cloud |
+
+The reCAPTCHA Enterprise key covers only the production domain, so test on https://slime-lime-eta.vercel.app. Cloud answers fail App Check on Vercel preview URLs, and localhost needs an App Check debug token (steps under [Hybrid AI (Firebase AI Logic)](#hybrid-ai-firebase-ai-logic) in Run locally).
 
 <p align="center">
   <img src="assets/readme/concierge.webp" width="100%" alt="Three concierge panels: it builds a 12-bottle pack for $30.75, makes it a $27.69 monthly PayPal subscription, then pauses it only after the shopper says confirm.">
@@ -164,7 +228,7 @@ Vercel auto-deploys on push to `main`. Production alias: **slime-lime-eta.vercel
 
 ## Built for the hackathon
 
-Ready to paste into Devpost: every pull request merged on or after 2026-10-01, from `gh pr list --state merged --search "merged:>=2026-10-01"`. Dates are merge dates in UTC.
+Every pull request merged on or after 2026-10-01, from `gh pr list --state merged --search "merged:>=2026-10-01"`. Dates are merge dates in UTC.
 
 The repo started in April 2026 as a design portfolio piece, before the hackathon.
 
@@ -219,6 +283,9 @@ The repo started in April 2026 as a design portfolio piece, before the hackathon
 | [#47](https://github.com/ryanflash66/slime-lime/pull/47) | Empty fridge: a button in the Fridge (with Undo) and an empty_fridge tool for the agent | 2026-11-11 | Empty the Fridge in one click, with Undo, or ask the agent to empty it. |
 | [#46](https://github.com/ryanflash66/slime-lime/pull/46) | README: subscriptions and hands-free are live, not in progress | 2026-11-13 | The README describes subscriptions and hands-free mode as shipped. |
 | [#48](https://github.com/ryanflash66/slime-lime/pull/48) | README: brand visuals matching the site | 2026-11-13 | This README's hero, concierge, store and how-it-works images, built from the site's own fonts and art. |
+| [#49](https://github.com/ryanflash66/slime-lime/pull/49) | Ignore .env*.local so local secrets stay out of git | 2026-11-17 | Keeps the App Check debug token and other local secrets out of git. |
+| [#50](https://github.com/ryanflash66/slime-lime/pull/50) | HybridAI: load Firebase AI Logic with an On-device/Cloud badge | 2026-11-17 | Firebase AI Logic in the browser with App Check, Gemini Nano first and cloud Gemini as fallback, the badge and the `#/hybrid` test page. |
+| [#51](https://github.com/ryanflash66/slime-lime/pull/51) | Vibe to Pack: a vibe becomes a Fridge pack on Gemini Nano with a JSON schema and cloud fallback (DAR-723) | 2026-11-17 | Vibe to Pack on the home page: one JSON schema constrains Nano and the cloud, and the pack fills the Fridge. |
 
 </details>
 
