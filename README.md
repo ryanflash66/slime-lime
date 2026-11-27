@@ -67,13 +67,13 @@ Open https://slime-lime-eta.vercel.app/#/hybrid, type any prompt and click **Ask
 
 All in [`hybrid-ai.js`](hybrid-ai.js), loaded as an ES module with the Firebase JS SDK 13.2.0 from Google's CDN through the import map in `Slime Lime.html` (no build step):
 
-| Line | What it does |
+| Line (as of the Nov 17 deploy) | What it does |
 |---|---|
-| 7 | Imports `getAI`, `getGenerativeModel`, `InferenceMode` and `InferenceSource` from `firebase/ai` |
-| 67 | Starts App Check with reCAPTCHA Enterprise |
-| 72 to 76 | The hybrid model (`PREFER_ON_DEVICE`) and the cloud-only fallback (`ONLY_IN_CLOUD`) |
-| 217 to 222 | The Vibe to Pack model pair, with the JSON schema on both sides |
-| 135 and 145 | `generateContent` at runtime, on-device first, then the cloud |
+| [7](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L7) | Imports `getAI`, `getGenerativeModel`, `InferenceMode` and `InferenceSource` from `firebase/ai` |
+| [67](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L67) | Starts App Check with reCAPTCHA Enterprise |
+| [72 to 76](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L72-L76) | The hybrid model (`PREFER_ON_DEVICE`) and the cloud-only fallback (`ONLY_IN_CLOUD`) |
+| [217 to 222](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L217-L222) | The Vibe to Pack model pair, with the JSON schema on both sides |
+| [135](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L135) and [145](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L145) | `generateContent` at runtime, on-device first, then the cloud |
 
 The reCAPTCHA Enterprise key covers only the production domain, so Vercel preview URLs and localhost need an App Check debug token. The steps are under [Hybrid AI (Firebase AI Logic)](#hybrid-ai-firebase-ai-logic) in Run locally.
 
