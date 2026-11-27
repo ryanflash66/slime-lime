@@ -8,7 +8,7 @@
 
 # Slime Lime
 
-Slime Lime is a fictional clean-formula gaming soda brand, and this repo is its storefront. The hackathon entry is the **Flavor Concierge**: an AI agent that builds your pack from the real lineup, sets a delivery cadence, and checks out with PayPal, either as a one-time order or as a PayPal Subscription. It runs on Claude Haiku 5.5, with Gemini as an automatic fallback, and has a hands-free voice mode.
+Slime Lime is a fictional clean-formula gaming soda brand, and this repo is its storefront. Its #BuildHybridAI entry is **Vibe to Pack** (next section). Its earlier PayPal AI Hackathon entry is the **Flavor Concierge**: an AI agent that builds your pack from the real lineup, sets a delivery cadence, and checks out with PayPal, either as a one-time order or as a PayPal Subscription. It runs on Claude Haiku 5.5, with Gemini as an automatic fallback, and has a hands-free voice mode.
 
 > [!NOTE]
 > Payments run in the **PayPal sandbox, test money only**. Nothing is charged and nothing ships.
@@ -22,7 +22,7 @@ Slime Lime is a fictional clean-formula gaming soda brand, and this repo is its 
 Slime Lime started in April 2026 as a design portfolio site, and the storefront, PayPal checkout, subscriptions, the Flavor Concierge and hands-free voice were built before this hackathon opened. During the submission period I added:
 
 - **Firebase AI Logic in the browser** (`hybrid-ai.js`): one hybrid engine that asks with `InferenceMode.PREFER_ON_DEVICE`, so Gemini Nano answers when it's ready and cloud Gemini answers otherwise. A 20-second on-device timeout falls back to an `ONLY_IN_CLOUD` model, so a stuck first call never freezes the page.
-- **Vibe to Pack** on the home page (`vibe-pack.jsx`): one JSON schema, with the real flavor ids as an enum, constrains both Nano (`responseConstraint`) and the cloud (`responseJsonSchema`). The answer is checked again before it reaches the Fridge, and the bottle counts are scaled to the number the shopper asked for.
+- **Vibe to Pack** on the home page (`vibe-pack.jsx`): one JSON schema, with the real flavor ids as an enum, constrains both Nano (`responseConstraint`) and the cloud (`responseJsonSchema`). The answer is checked again before it reaches the Fridge, and the bottle counts are scaled to the number the shopper asked for (6 if none, at most 48).
 - **The On-device / Cloud badge and the Gemini Nano status pill** (`hybrid.jsx`): shows whether the model is ready, offers a Download button (Chrome only starts the download after a click) and shows its progress.
 - **A free-text test page** at `#/hybrid`.
 - **App Check** with reCAPTCHA Enterprise on the production domain.
@@ -42,11 +42,11 @@ No account or login is needed. Payments are PayPal sandbox, test money only.
 1. Open https://slime-lime-eta.vercel.app. In the first-visit picker, click **Skip**.
 2. Scroll down to **Say the vibe. Get the pack.**, just under the flavor lineup.
 3. Tick **Cloud only**, then click the example **chill, low sugar, 6**.
-4. You should see a **Cloud** badge, a one-line reason, 6 bottles across 1 to 4 flavors, and **6 BOTTLES · IN YOUR FRIDGE**. Click **Open Fridge** to see the pack priced by the server.
+4. You should see a **Cloud** badge, a one-line reason, 6 bottles across a few real flavors, and **6 BOTTLES · IN YOUR FRIDGE**. Click **Open Fridge** to see the pack. The amount PayPal charges is set again by the server at checkout.
 
 **2. On-device path (Gemini Nano in Chrome)**
 
-1. Use Chrome on desktop, version 139 or newer. Open `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input`, set it to **Enabled** and relaunch Chrome.
+1. Use Chrome on desktop, version 139 or newer. Paste `chrome://flags/#prompt-api-for-gemini-nano-multimodal-input` into the address bar, set the flag to **Enabled** and relaunch Chrome.
 2. Open https://slime-lime-eta.vercel.app again. The status pill above the vibe box shows the Gemini Nano state:
    - **On-device model not downloaded**, with a **Download** link: click it. The download can take several minutes and needs free disk space. The pill shows its progress.
    - **On-device model ready**: go to the next step.
@@ -75,7 +75,7 @@ All in [`hybrid-ai.js`](hybrid-ai.js), loaded as an ES module with the Firebase 
 | [217 to 222](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L217-L222) | The Vibe to Pack model pair, with the JSON schema on both sides |
 | [135](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L135) and [145](https://github.com/ryanflash66/slime-lime/blob/463c637eeec2197fe8e7127e3a030c542388372e/hybrid-ai.js#L145) | `generateContent` at runtime, on-device first, then the cloud |
 
-The reCAPTCHA Enterprise key covers only the production domain, so Vercel preview URLs and localhost need an App Check debug token. The steps are under [Hybrid AI (Firebase AI Logic)](#hybrid-ai-firebase-ai-logic) in Run locally.
+The reCAPTCHA Enterprise key covers only the production domain, so test on https://slime-lime-eta.vercel.app. Cloud answers fail App Check on Vercel preview URLs, and localhost needs an App Check debug token (steps under [Hybrid AI (Firebase AI Logic)](#hybrid-ai-firebase-ai-logic) in Run locally).
 
 <p align="center">
   <img src="assets/readme/concierge.webp" width="100%" alt="Three concierge panels: it builds a 12-bottle pack for $30.75, makes it a $27.69 monthly PayPal subscription, then pauses it only after the shopper says confirm.">
